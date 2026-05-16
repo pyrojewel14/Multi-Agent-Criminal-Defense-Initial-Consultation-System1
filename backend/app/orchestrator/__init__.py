@@ -1,3 +1,7 @@
-from app.orchestrator.workflow import create_workflow, run_workflow
+from app.orchestrator.workflow import (
+    ConsultationOrchestrator,
+    orchestrator,
+    check_consent,
+)
 
-__all__ = ["create_workflow", "run_workflow"]
+__all__ = ["ConsultationOrchestrator", "orchestrator", "check_consent"]

@@ -1,6 +1,2 @@
-main_prompt: app/prompt/main_prompt.txt
-rag_summary_prompt: app/prompt/rag_summarize.txt
-report_prompt: app/prompt/report_prompt.txt
-reorder_prompt: app/prompt/reorder_prompt.txt
 receptionist_prompt: app/prompts/receptionist.txt
 lawref_prompt: app/prompts/lawref.txt

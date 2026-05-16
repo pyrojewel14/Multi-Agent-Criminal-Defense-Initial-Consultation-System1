@@ -1,3 +1,3 @@
-from app.security.disclaimer import DISCLAIMER_PREFIX, inject_disclaimer
+from app.security.disclaimer import DisclaimerService, disclaimer, DISCLAIMER_PREFIX
 
-__all__ = ["DISCLAIMER_PREFIX", "inject_disclaimer"]
+__all__ = ["DisclaimerService", "disclaimer", "DISCLAIMER_PREFIX"]

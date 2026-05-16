@@ -8,6 +8,12 @@ PROMPT_CONFIG_PATH = PROJECT_ROOT / "app" / "config" / "prompt.yaml"
 
 
 class PromptLoader:
+    """Loads per-agent System Prompts from text files mapped by YAML config.
+
+    Prompts are kept in separate .txt files (per encoding rules) and indexed
+    by a YAML registry under config/prompt.yaml.
+    """
+
     def __init__(self):
         self._logger = get_logger("PromptLoader")
         self._prompt_map: dict[str, str] = {}
@@ -32,6 +38,19 @@ class PromptLoader:
         )
 
     def load(self, name: str) -> str:
+        """Load and return the prompt text for a registered prompt name.
+
+        Args:
+            name: Key in the prompt.yaml registry (e.g. 'receptionist_prompt').
+
+        Returns:
+            The full text content of the corresponding .txt file.
+
+        Raises:
+            KeyError: If the name is not registered in prompt.yaml.
+            FileNotFoundError: If the referenced .txt file does not exist.
+            OSError: If the file cannot be read.
+        """
         if name not in self._prompt_map:
             self._logger.error("Prompt '%s' not found in config", name)
             raise KeyError(
@@ -60,6 +79,7 @@ class PromptLoader:
         return content
 
     def get_map(self) -> dict[str, str]:
+        """Return a copy of the prompt name → relative path mapping."""
         return dict(self._prompt_map)
 
 

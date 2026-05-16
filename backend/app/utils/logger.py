@@ -29,7 +29,10 @@ _PII_PATTERNS: list[tuple[re.Pattern, str]] = [
 
 
 class SensitiveFilter(logging.Filter):
+    """Logging filter that masks PII (ID cards, phones, emails) in messages."""
+
     def filter(self, record: logging.LogRecord) -> bool:
+        """Apply all PII regex replacements to the log message."""
         msg = record.getMessage()
         for pattern, replacement in _PII_PATTERNS:
             msg = pattern.sub(replacement, msg)
@@ -62,6 +65,19 @@ _console_handler.addFilter(SensitiveFilter())
 
 
 def get_logger(name: str, level: int | str | None = None) -> logging.Logger:
+    """Create or retrieve a logger with file + console handlers.
+
+    Loggers are cached by name (stdlib behavior). Handlers are shared
+    across all loggers and include PII filtering on every record.
+
+    Args:
+        name: Logger name, typically the module or class name.
+        level: Optional override for this logger's effective level.
+               Falls back to LOG_LEVEL_MODULES env → LOG_LEVEL env → INFO.
+
+    Returns:
+        A configured logging.Logger instance.
+    """
     logger = logging.getLogger(name)
     resolved = (
         level

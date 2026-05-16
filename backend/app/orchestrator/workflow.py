@@ -4,6 +4,7 @@ from app.state.consultation_state import ConsultationState
 from app.agents.receptionist import receptionist_node
 from app.agents.law_ref import law_ref_node
 from app.utils.logger import get_logger
+from app.errors.exceptions import LLMServiceException, LLMTimeoutException
 
 
 def check_consent(state: ConsultationState) -> str:
@@ -57,13 +58,28 @@ class ConsultationOrchestrator:
 
         Returns:
             The final ConsultationState after all agents have executed.
+
+        Raises:
+            LLMServiceException, LLMTimeoutException: Propagated from LLM calls.
         """
         session_id = initial_state.get("session_id", "unknown")
         consent = initial_state.get("consent_given")
         self._logger.info(
             "Running workflow: session=%s, consent=%s", session_id, consent
         )
-        result = await self._compiled.ainvoke(initial_state)
+        try:
+            result = await self._compiled.ainvoke(initial_state)
+        except (LLMServiceException, LLMTimeoutException) as e:
+            self._logger.error(
+                "Workflow aborted: session=%s, error=%s", session_id, e.code.value
+            )
+            raise
+        except Exception as e:
+            self._logger.error(
+                "Workflow failed: session=%s, error=%s", session_id, e
+            )
+            raise
+
         self._logger.info(
             "Workflow completed: session=%s, agent=%s",
             session_id,

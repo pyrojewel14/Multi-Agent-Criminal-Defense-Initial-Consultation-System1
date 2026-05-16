@@ -2,9 +2,16 @@ from langchain_core.messages import SystemMessage, HumanMessage
 
 from app.utils.config_loader import config_loader
 from app.utils.logger import get_logger
+from app.errors.exceptions import LLMServiceException, LLMTimeoutException
 
 
 class LLMGateway:
+    """Unified LLM invocation entry point.
+
+    Supports ALIYUN (DashScope / Qwen3) and OLLAMA (local) backends,
+    switched via LLM_TYPE env var. Legal queries force temperature=0.
+    """
+
     def __init__(self):
         self._config = config_loader.get_llm_config()
         self._logger = get_logger("LLMGateway")
@@ -15,6 +22,11 @@ class LLMGateway:
         )
 
     def _create_model(self, temperature: float):
+        """Instantiate the underlying LangChain chat model.
+
+        Args:
+            temperature: Sampling temperature (0.0 for legal responses).
+        """
         if self._config["type"] == "OLLAMA":
             from langchain_ollama import ChatOllama
 
@@ -40,20 +52,45 @@ class LLMGateway:
         temperature: float = 0.1,
         is_legal: bool = False,
     ) -> str:
+        """Invoke the LLM and return the text response.
+
+        Args:
+            system_prompt: System-level instructions for the model.
+            user_message: User's input text.
+            temperature: Sampling temperature (0.0–1.0), forced to 0 for legal.
+            is_legal: If True, temperature is locked to 0.0.
+
+        Returns:
+            The model's text output.
+
+        Raises:
+            LLMTimeoutException: When the upstream API times out.
+            LLMServiceException: When the upstream API returns an error.
+        """
         actual_temp = 0.0 if is_legal else temperature
         self._logger.debug(
             "LLM call: temp=%.2f, is_legal=%s, msg_len=%d",
             actual_temp, is_legal, len(user_message),
         )
 
-        model = self._create_model(actual_temp)
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_message),
         ]
-        response = await model.ainvoke(messages)
-        self._logger.debug("LLM response: len=%d", len(response.content))
-        return response.content
+
+        try:
+            model = self._create_model(actual_temp)
+            response = await model.ainvoke(messages)
+        except TimeoutError as e:
+            self._logger.error("LLM timeout: %s", e)
+            raise LLMTimeoutException(detail=str(e)) from e
+        except Exception as e:
+            self._logger.error("LLM service error: %s", e)
+            raise LLMServiceException(detail=str(e)) from e
+
+        content = response.content
+        self._logger.debug("LLM response: len=%d", len(content))
+        return content
 
 
 llm_gateway = LLMGateway()

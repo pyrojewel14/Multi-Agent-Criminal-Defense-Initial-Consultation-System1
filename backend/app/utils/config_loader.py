@@ -7,14 +7,26 @@ load_dotenv()
 
 
 class ConfigLoader:
+    """Loads environment-driven configuration for LLM backends.
+
+    Reads .env once at import time. Provides typed accessors for
+    ALIYUN (DashScope) and OLLAMA (local) connection parameters.
+    """
+
     def __init__(self):
         self._logger = get_logger("ConfigLoader")
 
     @property
     def llm_type(self) -> str:
+        """Active LLM backend: 'ALIYUN' or 'OLLAMA'."""
         return os.getenv("LLM_TYPE", "ALIYUN").upper()
 
     def get_llm_config(self) -> dict:
+        """Return a nested dict with aliyun/ollama connection settings.
+
+        Returns:
+            {"type": "ALIYUN", "aliyun": {...}, "ollama": {...}}
+        """
         cfg = {
             "type": self.llm_type,
             "aliyun": {

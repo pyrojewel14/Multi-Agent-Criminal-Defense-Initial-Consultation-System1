@@ -107,3 +107,25 @@ class LLMTimeoutException(AppException):
 
     def __init__(self, detail: str = ""):
         super().__init__(detail=detail)
+
+
+class UnauthorizedException(AppException):
+    """Raised when the X-Session-ID header is missing, invalid, or expired."""
+
+    code = ErrorCode.UNAUTHORIZED
+    status_code = 401
+    message = "会话验证失败，请重新开始咨询"
+
+    def __init__(self, detail: str = ""):
+        super().__init__(detail=detail)
+
+
+class SessionExpiredException(AppException):
+    """Raised when the session has exceeded its TTL and must be recreated."""
+
+    code = ErrorCode.SESSION_EXPIRED
+    status_code = 401
+    message = "会话已过期，请重新开始咨询"
+
+    def __init__(self, session_id: str):
+        super().__init__(detail=f"Session expired: {session_id}")

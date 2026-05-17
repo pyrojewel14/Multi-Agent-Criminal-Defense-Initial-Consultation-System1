@@ -7,6 +7,8 @@ from app.errors.exceptions import (
     LawRetrievalFailedException,
     LLMServiceException,
     LLMTimeoutException,
+    UnauthorizedException,
+    SessionExpiredException,
 )
 from app.errors.register import register_exception_handlers
 
@@ -19,5 +21,7 @@ __all__ = [
     "LawRetrievalFailedException",
     "LLMServiceException",
     "LLMTimeoutException",
+    "UnauthorizedException",
+    "SessionExpiredException",
     "register_exception_handlers",
 ]

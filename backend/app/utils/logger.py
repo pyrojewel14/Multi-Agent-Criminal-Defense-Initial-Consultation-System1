@@ -29,10 +29,17 @@ _PII_PATTERNS: list[tuple[re.Pattern, str]] = [
 
 
 class SensitiveFilter(logging.Filter):
-    """Logging filter that masks PII (ID cards, phones, emails) in messages."""
+    """日志过滤器，对消息中的 PII（身份证、手机号、邮箱等）进行脱敏。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        """Apply all PII regex replacements to the log message."""
+        """对日志消息应用所有 PII 正则替换。
+
+        Args:
+            record: 日志记录对象。
+
+        Returns:
+            是否允许该日志记录通过。
+        """
         msg = record.getMessage()
         for pattern, replacement in _PII_PATTERNS:
             msg = pattern.sub(replacement, msg)
@@ -65,18 +72,18 @@ _console_handler.addFilter(SensitiveFilter())
 
 
 def get_logger(name: str, level: int | str | None = None) -> logging.Logger:
-    """Create or retrieve a logger with file + console handlers.
+    """创建或获取一个配置好的 Logger（带文件和控制台处理器）。
 
-    Loggers are cached by name (stdlib behavior). Handlers are shared
-    across all loggers and include PII filtering on every record.
+    Logger 按名称缓存（标准库行为）。所有 Handler 共享，
+    每次记录都会经过 PII 过滤器。
 
     Args:
-        name: Logger name, typically the module or class name.
-        level: Optional override for this logger's effective level.
-               Falls back to LOG_LEVEL_MODULES env → LOG_LEVEL env → INFO.
+        name: Logger 名称，通常使用模块名或类名。
+        level: 可选的日志级别覆盖。
+               优先级：level 参数 > LOG_LEVEL_MODULES 环境变量 > LOG_LEVEL 环境变量 > INFO。
 
     Returns:
-        A configured logging.Logger instance.
+        配置好的 logging.Logger 实例。
     """
     logger = logging.getLogger(name)
     resolved = (

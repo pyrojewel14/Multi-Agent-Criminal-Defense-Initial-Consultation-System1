@@ -39,9 +39,10 @@ class HybridRetriever:
             documents.append(Document(page_content=doc_content, metadata=metadata))
 
         if documents:
+            bm25_k = min(chroma_config['k'], 2)
             bm25_retriever = BM25Retriever.from_documents(
                 documents=documents,
-                k=chroma_config['k']
+                k=bm25_k
             )
             return bm25_retriever
         else:
@@ -77,10 +78,21 @@ class HybridRetriever:
             return EmptyRetriever()
 
         filter_dict = {'user_id': user_id}
+        query_length = len(query) if query else 0
+
+        if query_length >= 200:
+            vector_retriever = self.vectors_store.as_retriever(
+                search_type='similarity',
+                search_kwargs={'k': chroma_config['k'], 'filter': filter_dict},
+            )
+            return vector_retriever
+
+        vec_k = chroma_config['k']
         vector_retriever = self.vectors_store.as_retriever(
             search_type='similarity',
-            search_kwargs={'k': chroma_config['k'], 'filter': filter_dict},
+            search_kwargs={'k': vec_k, 'filter': filter_dict},
         )
+
         bm25_retriever = await self.get_bm25_retriever(user_id)
 
         if bm25_retriever:
@@ -97,35 +109,25 @@ class HybridRetriever:
     def get_dynamic_weights(query: str = None):
         """根据查询动态调整权重。
 
+        法律文本 BM25 易产生噪音（法条间共用大量法律术语），
+        对长查询（如 HyDE 生成的假设性文档）提高向量权重以抑制噪音。
+
         Args:
             query: 查询语句。
 
         Returns:
             权重列表 [向量检索权重, BM25 检索权重]。
         """
-        default_vector_weight = 0.5
-        default_bm25_weight = 0.5
-
         if not query:
-            return [default_vector_weight, default_bm25_weight]
+            return [0.8, 0.2]
 
         query_length = len(query)
-        query_words = len(query.split())
 
-        if query_length > 50:
-            vector_weight = 0.7
-            bm25_weight = 0.3
+        if query_length > 200:
+            return [0.9, 0.1]
+        elif query_length > 50:
+            return [0.8, 0.2]
         elif query_length < 20:
-            vector_weight = 0.3
-            bm25_weight = 0.7
+            return [0.3, 0.7]
         else:
-            vector_weight = default_vector_weight
-            bm25_weight = default_bm25_weight
-
-        if query_words > 0:
-            word_density = query_words / query_length
-            if word_density > 0.1:
-                bm25_weight = min(bm25_weight + 0.1, 0.7)
-                vector_weight = max(vector_weight - 0.1, 0.3)
-
-        return [vector_weight, bm25_weight]
+            return [0.6, 0.4]

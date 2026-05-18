@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import os
 import tempfile
 
@@ -6,10 +7,12 @@ from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
 from app.rag.text_spliter import AsyncTextSplitter
+from app.rag.legal_text_splitter import LegalArticleSplitter
 from app.utils.config import chroma_config
 from app.utils.factory import embed_model
 from app.utils.file_handler import pdf_loader, txt_loader, listdir_allowed_type, get_file_md5_hex, markdown_loader, \
     ppt_loader, word_loader, pdf_loader_sync, txt_loader_sync, markdown_loader_sync, ppt_loader_sync, word_loader_sync
+from app.utils.json_handler import json_loader, json_loader_sync
 from app.utils.logger import get_logger
 
 
@@ -22,12 +25,25 @@ class DocumentProcessor:
     def __init__(self, vectors_store: Chroma, md5_store):
         self.vectors_store = vectors_store
         self.md5_store = md5_store
-        self.spliter = AsyncTextSplitter(
-            chunk_size=chroma_config['chunk_size'],
-            chunk_overlap=chroma_config['chunk_overlap'],
-            separators=chroma_config['separators'],
-            embedding_model=embed_model
-        )
+        
+        splitter_type = chroma_config.get('splitter_type', 'recursive')
+        
+        if splitter_type == 'legal_article':
+            self.spliter = LegalArticleSplitter(
+                chunk_size=chroma_config.get('chunk_size', 2000),
+                chunk_overlap=chroma_config.get('chunk_overlap', 200),
+                preserve_structure=chroma_config.get('preserve_legal_structure', True),
+                enable_metadata_extraction=chroma_config.get('enable_metadata_extraction', True)
+            )
+            _logger.info("使用法律专用文本分割器 (LegalArticleSplitter)")
+        else:
+            self.spliter = AsyncTextSplitter(
+                chunk_size=chroma_config['chunk_size'],
+                chunk_overlap=chroma_config['chunk_overlap'],
+                separators=chroma_config['separators'],
+                embedding_model=embed_model
+            )
+            _logger.info("使用通用文本分割器 (AsyncTextSplitter)")
 
     async def get_file_document(self, read_path: str) -> list[Document]:
         """异步加载文件。
@@ -48,6 +64,8 @@ class DocumentProcessor:
             return await ppt_loader(read_path)
         elif read_path.endswith('.docx'):
             return await word_loader(read_path)
+        elif read_path.endswith('.json'):
+            return await json_loader(read_path)
         else:
             return []
 
@@ -70,6 +88,8 @@ class DocumentProcessor:
             return ppt_loader_sync(read_path)
         elif read_path.endswith('.docx'):
             return word_loader_sync(read_path)
+        elif read_path.endswith('.json'):
+            return json_loader_sync(read_path)
         else:
             return []
 
@@ -199,7 +219,35 @@ class DocumentProcessor:
                     doc.metadata['original_filename'] = filename
                     doc.metadata['md5'] = md5_hex
 
-                await asyncio.to_thread(self.vectors_store.add_documents, document)
+                existing_chunk_md5s = await self.md5_store.get_all_chunk_md5(user_id)
+                unique_docs = []
+                for doc in document:
+                    chunk_md5 = hashlib.md5(doc.page_content[:200].encode()).hexdigest()
+                    if chunk_md5 not in existing_chunk_md5s:
+                        existing_chunk_md5s.add(chunk_md5)
+                        unique_docs.append(doc)
+                        await self.md5_store.save_chunk_md5(chunk_md5, user_id, md5_hex)
+                    else:
+                        _logger.info("Chunk MD5 已存在，跳过: %s...", doc.page_content[:40].replace('\n', ' '))
+
+                if not unique_docs:
+                    _logger.warning("所有 chunk 均已存在，跳过存储: %s", filename)
+                    if progress_callback:
+                        await progress_callback({
+                            'step': 'skipping',
+                            'filename': filename,
+                            'message': f'文件 {filename} 所有内容均已存在，跳过'
+                        })
+                    if files:
+                        try:
+                            os.unlink(file_path)
+                        except:
+                            pass
+                    continue
+
+                _logger.info("存储向量: %s, 总数=%d, 唯一=%d", filename, len(document), len(unique_docs))
+
+                await asyncio.to_thread(self.vectors_store.add_documents, unique_docs)
 
                 original_filename = file_names.get(file_path, filename) if files else filename
                 await self.md5_store.save_md5_hex(md5_hex, filename, original_filename, user_id)

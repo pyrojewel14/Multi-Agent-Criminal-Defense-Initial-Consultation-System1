@@ -1,9 +1,10 @@
 import asyncio
+import hashlib
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langsmith import traceable
 
-from app.rag.vector_store import VectorStoreService
+from app.rag.vector_store import get_vector_store
 from app.rag.reorder_service import reorder_service
 from app.utils.factory import chat_model
 from app.utils.prompt_loader import prompt_loader
@@ -12,9 +13,22 @@ from app.utils.logger import get_logger
 _logger = get_logger("RagService")
 
 
+def _deduplicate_documents(documents: list) -> list:
+    seen_hashes = set()
+    unique_docs = []
+    for doc in documents:
+        content_hash = hashlib.md5(doc.page_content[:200].encode()).hexdigest()
+        if content_hash not in seen_hashes:
+            seen_hashes.add(content_hash)
+            unique_docs.append(doc)
+    if len(unique_docs) < len(documents):
+        _logger.info("文档去重: %d -> %d", len(documents), len(unique_docs))
+    return unique_docs
+
+
 class RagService:
     def __init__(self, user_id: str = None, thinking_callback=None):
-        self.vector_store = VectorStoreService()
+        self.vector_store = get_vector_store()
         self.retriever = None
         self.user_id = user_id
         self.prompt_text = prompt_loader.load("rag_summary_prompt")
@@ -31,7 +45,7 @@ class RagService:
             query: 查询语句，用于动态调整权重。
         """
         if self.retriever is None:
-            weights = await self.vector_store.get_dynamic_weights(query)
+            weights = self.vector_store.get_dynamic_weights(query)
 
             if self.thinking_callback:
                 await self.thinking_callback({
@@ -73,7 +87,7 @@ class RagService:
                 | StrOutputParser()
             )
             hypothetical_doc = await hyde_chain.ainvoke({"query": query})
-            _logger.debug("HyDE 生成假设性文档: %s", hypothetical_doc[:100])
+            _logger.info("HyDE 生成假设性文档: %s", hypothetical_doc[:100])
             return hypothetical_doc
         except Exception as e:
             _logger.error("HyDE 生成假设性文档失败: %s", e)
@@ -97,7 +111,7 @@ class RagService:
             if self.retriever is None:
                 await self.initialize_retriever(query)
 
-            _logger.debug("HyDE 开始处理查询: %s", query[:50])
+            _logger.info("HyDE 开始处理查询: %s", query[:50])
 
             if self.thinking_callback:
                 await self.thinking_callback({
@@ -118,7 +132,7 @@ class RagService:
                     }
                 })
 
-            _logger.debug("HyDE 使用假设性文档进行检索")
+            _logger.info("HyDE 使用假设性文档进行检索")
 
             if self.thinking_callback:
                 await self.thinking_callback({
@@ -127,8 +141,14 @@ class RagService:
                     "content": "正在向量数据库中检索相关文档..."
                 })
 
-            documents = await self.retriever.ainvoke(hypothetical_doc)
+            hyde_retriever = await self.vector_store.get_retriever(hypothetical_doc, self.user_id)
+            documents = await hyde_retriever.ainvoke(hypothetical_doc)
+            documents = _deduplicate_documents(documents)
             _logger.info("HyDE 检索到 %d 个相关文档", len(documents))
+            for i, doc in enumerate(documents, 1):
+                source = doc.metadata.get("original_filename", doc.metadata.get("source", "?"))
+                preview = doc.page_content[:80].replace("\n", " ")
+                _logger.info("  [%d] %s | %s...", i, source, preview)
 
             if self.thinking_callback:
                 doc_previews = []
@@ -328,9 +348,9 @@ if __name__ == '__main__':
     import asyncio
 
     async def main():
-        service = RagService()
+        service = RagService(user_id="41109725c0f540fea7ecdf047f5597b6")
         await service.initialize_retriever()
-        result = await service.rag_summary("小户型适合什么扫地机器人")
+        result = await service.rag_summary("防卫过当致人死亡适用于哪条法律")
         print(result)
 
     asyncio.run(main())

@@ -17,21 +17,59 @@ from .document_handler import DocumentProcessor
 
 _logger = get_logger("VectorStore")
 
+_vector_store_instance = None
+
+
+def get_vector_store() -> "VectorStoreService":
+    global _vector_store_instance
+    if _vector_store_instance is None:
+        _vector_store_instance = VectorStoreService()
+    return _vector_store_instance
+
 
 class VectorStoreService:
     """向量数据库服务"""
 
     def __init__(self):
+        import chromadb
+        import chromadb.api.shared_system_client as _ssc
+        from chromadb.config import Settings
+
         persist_dir = get_abstract_path(chroma_config['persist_directory'])
+        os.makedirs(persist_dir, exist_ok=True)
+
+        _chroma_client = self._create_chroma_client(persist_dir)
+
         self.vectors_store = Chroma(
+            client=_chroma_client,
             collection_name=chroma_config['collection_name'],
             embedding_function=embed_model,
-            persist_directory=persist_dir,
         )
 
         self.md5_store = MD5Store()
         self.hybrid_retriever = HybridRetriever(self.vectors_store)
         self.document_processor = DocumentProcessor(self.vectors_store, self.md5_store)
+
+    @staticmethod
+    def _create_chroma_client(persist_dir: str):
+        import chromadb
+        import chromadb.api.shared_system_client as _ssc
+        from chromadb.config import Settings
+
+        for attempt in range(3):
+            _ssc.SharedSystemClient._identifier_to_system.clear()
+            try:
+                return chromadb.PersistentClient(
+                    path=persist_dir,
+                    settings=Settings(anonymized_telemetry=False),
+                )
+            except KeyError:
+                if attempt == 2:
+                    raise
+                _logger.warning(
+                    "ChromaDB PersistentClient KeyError (attempt %d/3), retrying...",
+                    attempt + 1,
+                )
 
     async def get_bm25_retriever(self, user_id: str = None):
         """获取 BM25 检索器。
@@ -65,7 +103,7 @@ class VectorStoreService:
         return await self.hybrid_retriever.get_retriever(query, user_id)
 
     @staticmethod
-    async def get_dynamic_weights(query: str = None):
+    def get_dynamic_weights(query: str = None):
         """获取动态权重。
 
         Args:
@@ -74,7 +112,7 @@ class VectorStoreService:
         Returns:
             权重列表。
         """
-        return await HybridRetriever.get_dynamic_weights(query)
+        return HybridRetriever.get_dynamic_weights(query)
 
     async def check_md5_hex(self, md5_for_check: str, user_id: str = None) -> bool:
         """检查 MD5 是否存在。
@@ -448,7 +486,7 @@ class VectorStoreService:
 
 if __name__ == '__main__':
     async def main():
-        store = VectorStoreService()
+        store = get_vector_store()
         await store.get_document()
 
         retriever = await store.get_retriever()

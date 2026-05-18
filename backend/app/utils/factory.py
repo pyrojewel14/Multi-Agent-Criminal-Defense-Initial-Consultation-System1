@@ -19,23 +19,30 @@ class DashScopeEmbeddingsWrapper(Embeddings):
     """阿里云 DashScope 嵌入模型封装。
 
     支持文本嵌入功能，将输入文本转换为向量表示。
+    使用 OpenAI 兼容接口调用阿里云百炼 embedding 服务。
     """
 
-    def __init__(self, model_name: str = "qwen3-embedding", api_key: str = None):
+    def __init__(self, model_name: str = "text-embedding-v4", api_key: str = None):
         """初始化 DashScope 嵌入模型。
 
         Args:
-            model_name: 模型名称，默认为 qwen3-embedding。
+            model_name: 模型名称，默认为 text-embedding-v4。
             api_key: API 密钥，如不提供则从环境变量获取。
         """
         try:
-            import dashscope
-
-            self.dashscope = dashscope
-            self.dashscope.api_key = api_key or os.getenv("ALIYUN_ACCESS_KEY_SECRET")
-            self.model_name = model_name
+            from openai import OpenAI
         except ImportError:
-            raise ImportError("需要安装 dashscope 库: pip install dashscope")
+            raise ImportError("需要安装 openai 库: pip install openai")
+
+        self.model_name = model_name
+        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY") or os.getenv("ALIYUN_ACCESS_KEY_SECRET")
+
+        if not self.api_key:
+            raise ValueError("未设置 API Key，请设置 DASHSCOPE_API_KEY 或 ALIYUN_ACCESS_KEY_SECRET 环境变量")
+
+        base_url = os.getenv("DASHSCOPE_BASE_URL") or os.getenv("ALIYUN_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+        self.client = OpenAI(api_key=self.api_key, base_url=base_url)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """将多个文本转换为嵌入向量。
@@ -46,34 +53,22 @@ class DashScopeEmbeddingsWrapper(Embeddings):
         Returns:
             嵌入向量列表，每个向量为 float 列表。
         """
-        results = []
-        for text in texts:
-            try:
-                resp = self.dashscope.TextEmbedding.call(
-                    model=self.model_name, input=text
-                )
-            except TimeoutError as e:
-                _logger.error("DashScope embedding 超时: %s", e)
-                raise LLMServiceException(
-                    detail=f"DashScope embedding 超时: {e}"
-                ) from e
-            except Exception as e:
-                _logger.error("DashScope embedding 错误: %s", e)
-                raise LLMServiceException(
-                    detail=f"DashScope embedding 错误: {e}"
-                ) from e
+        BATCH_SIZE = 10
+        all_embeddings = []
 
-            if resp.status_code != 200:
-                _logger.error(
-                    "DashScope embedding 失败: status=%d, message=%s",
-                    resp.status_code,
-                    resp.message,
+        for i in range(0, len(texts), BATCH_SIZE):
+            batch = texts[i:i + BATCH_SIZE]
+            try:
+                response = self.client.embeddings.create(
+                    model=self.model_name,
+                    input=batch
                 )
-                raise LLMServiceException(
-                    detail=f"DashScope embedding 失败: {resp.message}"
-                )
-            results.append(resp.output["embedding"])
-        return results
+                all_embeddings.extend([item.embedding for item in response.data])
+            except Exception as e:
+                _logger.error("DashScope embedding 批量错误 (batch %d-%d): %s", i, i + len(batch), e)
+                raise LLMServiceException(detail=f"DashScope embedding 批量错误: {e}") from e
+
+        return all_embeddings
 
     def embed_query(self, text: str) -> List[float]:
         """将单个查询文本转换为嵌入向量。
@@ -85,24 +80,14 @@ class DashScopeEmbeddingsWrapper(Embeddings):
             嵌入向量，为 float 列表。
         """
         try:
-            resp = self.dashscope.TextEmbedding.call(model=self.model_name, input=text)
-        except TimeoutError as e:
-            _logger.error("DashScope embedding 超时: %s", e)
-            raise LLMServiceException(detail=f"DashScope embedding 超时: {e}") from e
+            response = self.client.embeddings.create(
+                model=self.model_name,
+                input=text
+            )
+            return response.data[0].embedding
         except Exception as e:
             _logger.error("DashScope embedding 错误: %s", e)
             raise LLMServiceException(detail=f"DashScope embedding 错误: {e}") from e
-
-        if resp.status_code != 200:
-            _logger.error(
-                "DashScope embedding 失败: status=%d, message=%s",
-                resp.status_code,
-                resp.message,
-            )
-            raise LLMServiceException(
-                detail=f"DashScope embedding 失败: {resp.message}"
-            )
-        return resp.output["embedding"]
 
 
 class BaseModelFactory(ABC):
@@ -300,27 +285,13 @@ class EmbedModelFactory(BaseModelFactory):
         Returns:
             DashScopeEmbeddingsWrapper 实例。
         """
-        model_name = os.getenv("ALIYUN_EMBED_MODEL_NAME", "qwen3-embedding")
-        api_key = os.getenv("ALIYUN_ACCESS_KEY_SECRET")
+        model_name = os.getenv("ALIYUN_EMBED_MODEL_NAME", "text-embedding-v4")
+        api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("ALIYUN_ACCESS_KEY_SECRET")
 
         _logger.info("EmbedModel 使用阿里云百炼: model=%s", model_name)
 
         return DashScopeEmbeddingsWrapper(model_name=model_name, api_key=api_key)
 
-
-class RerankerModelFactory(BaseModelFactory):
-    """重排序模型工厂。
-
-    已废弃，使用 CrossEncoder 模型替代。
-    """
-
-    def generator(self) -> Optional[Embeddings | BaseChatModel]:
-        """生成重排序模型实例。
-
-        Returns:
-            始终返回 None，该工厂已废弃。
-        """
-        return None
 
 
 chat_model_factory = ChatModelFactory()

@@ -1,2 +1,3 @@
 receptionist_prompt: app/prompts/receptionist.txt
 lawref_prompt: app/prompts/lawref.txt
+rag_summary_prompt: app/prompts/rag_summary.txt

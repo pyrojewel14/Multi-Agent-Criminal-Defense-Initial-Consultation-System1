@@ -36,7 +36,7 @@ def find_model_path(base_path: str) -> str:
 
 def check_and_download_reranker_model() -> None:
     """检查重排序模型是否存在，如不存在则从魔搭社区下载。"""
-    local_model_path = os.getenv("RERANKER_MODEL_PATH", r"D:\Hugging_Face\models\Qwen3-Reranker-0.6B")
+    local_model_path = os.getenv("RERANKER_MODEL_PATH", "./data/models/Qwen3-Reranker-0.6B")
     modelscope_model_name = "Qwen/Qwen3-Reranker-0.6B"
 
     try:
@@ -68,24 +68,63 @@ class ReorderService:
     """文档重排序服务"""
 
     def __init__(self):
-        self.local_model_path = os.getenv("RERANKER_MODEL_PATH", r"D:\Hugging_Face\models\Qwen3-Reranker-0.6B")
+        self.local_model_path = os.getenv("RERANKER_MODEL_PATH", "./data/models/Qwen3-Reranker-0.6B")
         self.modelscope_model_name = "Qwen/Qwen3-Reranker-0.6B"
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self._model = None
+        self._model_unavailable = False
+
+    async def _ensure_model(self) -> bool:
+        """确保模型文件存在，不存在则尝试下载。
+
+        Returns:
+            模型是否可用。
+        """
+        if self._model_unavailable:
+            return False
+
+        actual_path = find_model_path(self.local_model_path)
+        if os.path.exists(os.path.join(actual_path, 'config.json')):
+            return True
+
+        _logger.info("重排序模型不存在，尝试从 ModelScope 下载: %s", self.modelscope_model_name)
+        try:
+            os.makedirs(self.local_model_path, exist_ok=True)
+            snapshot_download(
+                model_id=self.modelscope_model_name,
+                cache_dir=self.local_model_path,
+                revision='master'
+            )
+            _logger.info("重排序模型下载完成")
+            return True
+        except Exception as e:
+            _logger.warning("重排序模型下载失败，将跳过重排序: %s", e)
+            self._model_unavailable = True
+            return False
 
     async def _get_model(self):
         """懒加载模型实例。"""
-        if self._model is None:
-            actual_model_path = find_model_path(self.local_model_path)
-            _logger.info("加载重排序模型: %s", actual_model_path)
+        if self._model is not None:
+            return self._model
+
+        if not await self._ensure_model():
+            return None
+
+        actual_model_path = find_model_path(self.local_model_path)
+        _logger.info("加载重排序模型: %s", actual_model_path)
+        try:
             self._model = CrossEncoder(
                 actual_model_path,
                 max_length=512,
                 device=self.device,
-                local_files_only=True
             )
             self._model.eval()
             _logger.info("模型加载成功，使用设备: %s", self.device)
+        except Exception as e:
+            _logger.warning("重排序模型加载失败，将跳过重排序: %s", e)
+            self._model_unavailable = True
+            return None
+
         return self._model
 
     @property
@@ -93,7 +132,7 @@ class ReorderService:
         """获取模型实例（懒加载）。
 
         Returns:
-            CrossEncoder 模型实例。
+            CrossEncoder 模型实例，不可用时返回 None。
         """
         return await self._get_model()
 
@@ -129,6 +168,13 @@ class ReorderService:
             pairs = [(query, doc) for doc in documents]
 
             model = await self.model
+            if model is None:
+                return {
+                    "success": False,
+                    "documents": [],
+                    "error": "重排序模型不可用，跳过重排序"
+                }
+
             with torch.no_grad():
                 scores = model.predict(pairs, batch_size=1)
 

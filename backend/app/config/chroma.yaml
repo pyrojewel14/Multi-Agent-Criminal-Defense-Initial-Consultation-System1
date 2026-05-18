@@ -3,8 +3,11 @@ persist_directory: data/chromadb
 k: 5
 data_path: data
 md5_hex_store: data/md5_hex_store/md5_hex_store.txt
-allow_knowledge_file_types: ["txt", "pdf", "md", "pptx", "docx"]
+allow_knowledge_file_types: ["txt", "pdf", "md", "pptx", "docx", "json"]
 
-chunk_size: 200
-chunk_overlap: 20
-separators : ["\n\n", "\n", "。", "！", "？", "!", "?", " ", ""]
+splitter_type: "legal_article"
+chunk_size: 2000
+chunk_overlap: 200
+preserve_legal_structure: true
+enable_metadata_extraction: true
+separators : ["\n\n", "\n", ""]

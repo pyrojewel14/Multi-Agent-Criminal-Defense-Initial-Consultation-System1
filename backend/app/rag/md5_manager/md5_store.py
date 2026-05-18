@@ -280,3 +280,87 @@ class MD5Store:
         """
         _, records = await self._read_md5_records(user_id)
         return records
+
+    async def check_chunk_md5(self, chunk_md5: str, user_id: str) -> bool:
+        """检查 chunk 内容 MD5 是否已存在（去重用）。
+
+        Args:
+            chunk_md5: chunk 内容前200字符的 MD5。
+            user_id: 用户 ID。
+
+        Returns:
+            是否已存在。
+        """
+        md5_dir = self._get_md5_store_dir(user_id)
+        chunk_md5_dir = os.path.join(md5_dir, 'chunk_md5')
+        chunk_md5_file = os.path.join(chunk_md5_dir, 'chunks.txt')
+
+        if not await aio_os.path.exists(chunk_md5_file):
+            return False
+
+        try:
+            async with aiofiles.open(chunk_md5_file, 'r', encoding="utf-8") as f:
+                async for line in f:
+                    if line.strip() == chunk_md5:
+                        return True
+            return False
+        except Exception as e:
+            _logger.error("检查 chunk MD5 时出错: %s", e)
+            return False
+
+    async def save_chunk_md5(self, chunk_md5: str, user_id: str, doc_md5: str = None):
+        """保存 chunk 内容 MD5。
+
+        Args:
+            chunk_md5: chunk 内容前200字符的 MD5。
+            user_id: 用户 ID。
+            doc_md5: 所属文档的 MD5（可选，用于追溯）。
+        """
+        md5_dir = self._get_md5_store_dir(user_id)
+        chunk_md5_dir = os.path.join(md5_dir, 'chunk_md5')
+
+        if not await aio_os.path.exists(chunk_md5_dir):
+            await aio_os.makedirs(chunk_md5_dir, exist_ok=True)
+
+        chunk_md5_file = os.path.join(chunk_md5_dir, 'chunks.txt')
+
+        data = {
+            'chunk_md5': chunk_md5,
+            'doc_md5': doc_md5,
+            'save_time': datetime.now().isoformat()
+        }
+
+        async with aiofiles.open(chunk_md5_file, 'a', encoding="utf-8") as f:
+            await f.write(json.dumps(data, ensure_ascii=False) + '\n')
+
+    async def get_all_chunk_md5(self, user_id: str) -> set:
+        """获取用户的所有 chunk MD5（用于快速查重）。
+
+        Args:
+            user_id: 用户 ID。
+
+        Returns:
+            chunk MD5 值集合。
+        """
+        md5_dir = self._get_md5_store_dir(user_id)
+        chunk_md5_file = os.path.join(md5_dir, 'chunk_md5', 'chunks.txt')
+
+        if not await aio_os.path.exists(chunk_md5_file):
+            return set()
+
+        chunk_md5s = set()
+        try:
+            async with aiofiles.open(chunk_md5_file, 'r', encoding="utf-8") as f:
+                async for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                        chunk_md5s.add(data.get('chunk_md5', ''))
+                    except:
+                        pass
+            return chunk_md5s
+        except Exception as e:
+            _logger.error("读取 chunk MD5 时出错: %s", e)
+            return set()

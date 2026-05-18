@@ -11,17 +11,18 @@ from concurrent.futures import ThreadPoolExecutor
 from fastapi import HTTPException, UploadFile
 
 from app.utils.logger import get_logger
-from app.rag.vector_store import VectorStoreService
+from app.rag.vector_store import get_vector_store, VectorStoreService
 from app.rag.task_queue import TaskQueue
 from app.rag.sse_models import SSEEvent, SliceResult
 from app.utils.file_handler import get_file_md5_hex_sync
 
 
-ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.md', '.pptx', '.docx'}
+ALLOWED_EXTENSIONS = {'.pdf', '.txt', '.md', '.pptx', '.docx', '.json'}
 ALLOWED_MIME_TYPES = {
     'application/pdf', 'text/plain', 'text/markdown',
     'application/vnd.ms-powerpoint',
-    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/json'
 }
 MAX_FILE_SIZE = 20 * 1024 * 1024
 MAX_FOLDER_SIZE = 200 * 1024 * 1024
@@ -56,7 +57,7 @@ def _sync_slice_file(file_content: bytes, filename: str, file_index: int, user_i
             temp_file_path = temp_file.name
 
         try:
-            store = VectorStoreService()
+            store = get_vector_store()
             documents = store.get_file_document_sync(temp_file_path)
             if not documents:
                 queue.put(SliceResult.error_result(file_index=file_index, filename=filename, error="文件加载为空"))
@@ -97,7 +98,7 @@ class KnowledgeService:
         Returns:
             文件名。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
 
         if file.size > MAX_FILE_SIZE:
             raise HTTPException(status_code=400, detail="文件大小不能超过 20MB")
@@ -416,7 +417,7 @@ class KnowledgeService:
 
         queue, executor, _ = self._start_slicing(valid_files, user_id)
 
-        store = VectorStoreService()
+        store = get_vector_store()
         async for sse in self._process_slice_results(queue, len(valid_files), store, state, user_id):
             yield sse
 
@@ -452,7 +453,7 @@ class KnowledgeService:
         Args:
             user_id: 用户 ID。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         await store.delete_user_documents(user_id)
 
     async def handle_clear_user_md5(self, user_id: str, delete_documents: bool = True) -> None:
@@ -462,7 +463,7 @@ class KnowledgeService:
             user_id: 用户 ID。
             delete_documents: 是否同时删除知识库文档（默认 True）。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         await store.delete_user_md5(user_id, delete_documents)
         if delete_documents:
             _logger.info("知识库清空用户 MD5 记录和文档: user_id=%s", user_id)
@@ -480,7 +481,7 @@ class KnowledgeService:
         Returns:
             是否成功删除。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         success = await store.delete_single_md5(user_id, md5_value, delete_documents)
         if success:
             _logger.info("知识库删除 MD5 记录: user_id=%s, md5=%s", user_id, md5_value)
@@ -499,7 +500,7 @@ class KnowledgeService:
         Returns:
             是否成功删除。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         success = await store.delete_by_filename(user_id, filename, delete_documents)
         if success:
             _logger.info("知识库删除文件: user_id=%s, filename=%s", user_id, filename)
@@ -517,7 +518,7 @@ class KnowledgeService:
         Returns:
             MD5 信息字典。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         return await store.get_md5_info(user_id, md5_value)
 
     async def handle_get_all_md5_records(self, user_id: str):
@@ -529,7 +530,7 @@ class KnowledgeService:
         Returns:
             MD5 记录列表。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         return await store.get_all_md5_records(user_id)
 
     async def handle_get_user_knowledge(self, user_id: str) -> list:
@@ -541,7 +542,7 @@ class KnowledgeService:
         Returns:
             文档信息列表。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         documents = await store.get_user_documents(user_id)
         _logger.info("知识库获取用户文档: user_id=%s, count=%d", user_id, len(documents))
         return documents
@@ -556,7 +557,7 @@ class KnowledgeService:
         Returns:
             文档详情信息。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         document = await store.get_document_detail(user_id, filename)
         if not document:
             raise HTTPException(status_code=404, detail=f"文档 {filename} 不存在")
@@ -573,7 +574,7 @@ class KnowledgeService:
         Returns:
             切片信息字典。
         """
-        store = VectorStoreService()
+        store = get_vector_store()
         chunks = await store.get_document_chunks(user_id, filename)
         if chunks['total_chunks'] == 0:
             raise HTTPException(status_code=404, detail=f"文档 {filename} 不存在或没有切片")

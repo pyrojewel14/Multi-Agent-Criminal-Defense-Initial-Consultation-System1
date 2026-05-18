@@ -5,6 +5,7 @@ from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
 
 from app.v1.router.consultation import consultation_router
+from app.v1.router.knowledge_router import knowledge_router
 from app.errors.register import register_exception_handlers
 from app.utils.logger import get_logger
 
@@ -34,6 +35,7 @@ app.add_middleware(
 )
 
 app.include_router(consultation_router, prefix="/api/v1")
+app.include_router(knowledge_router, prefix="/api/v1")
 
 register_exception_handlers(app)
 

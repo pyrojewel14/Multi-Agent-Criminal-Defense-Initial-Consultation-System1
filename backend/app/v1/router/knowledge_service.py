@@ -447,6 +447,14 @@ class KnowledgeService:
         write_progress = (written_count / total) * 40
         return int(min(99, slice_progress + write_progress))
 
+    async def clean_all(self) -> None:
+        """处理清空所有知识库文档（供超管使用）。
+
+        删除向量库中的所有文档和 MD5 记录。
+        """
+        store = get_vector_store()
+        await store.delete_all_documents()
+
     async def clean_user_upload(self, user_id: str) -> None:
         """处理删除用户上传的所有向量逻辑。
 
@@ -455,6 +463,19 @@ class KnowledgeService:
         """
         store = get_vector_store()
         await store.delete_user_documents(user_id)
+
+    async def handle_clear_all_md5(self, delete_documents: bool = True) -> None:
+        """处理清空所有 MD5 记录（供超管使用）。
+
+        Args:
+            delete_documents: 是否同时删除知识库文档（默认 True）。
+        """
+        store = get_vector_store()
+        if delete_documents:
+            await store.delete_all_documents()
+        else:
+            await store.md5_store.clear_all()
+        _logger.info("已清空所有 MD5 记录（delete_documents=%s）", delete_documents)
 
     async def handle_clear_user_md5(self, user_id: str, delete_documents: bool = True) -> None:
         """清空用户 MD5 记录。

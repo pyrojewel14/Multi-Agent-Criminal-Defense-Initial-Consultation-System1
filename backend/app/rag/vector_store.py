@@ -148,6 +148,22 @@ class VectorStoreService:
         """
         self.md5_store.save_md5_hex_sync(md5_hex, filename, original_filename, user_id)
 
+    async def delete_all_documents(self):
+        """删除向量库中的所有文档和 MD5 记录。
+
+        仅供超管使用，用于清空整个知识库。
+        """
+        try:
+            await asyncio.to_thread(
+                self.vectors_store.delete,
+                where={}
+            )
+            await self.md5_store.clear_all()
+            _logger.info("已清空所有知识库文档和 MD5 记录")
+        except Exception as e:
+            _logger.error("清空所有文档出错: error=%s", e)
+            raise
+
     async def delete_user_documents(self, user_id: str):
         """删除指定用户的所有文档（包括 MD5 记录）。
 

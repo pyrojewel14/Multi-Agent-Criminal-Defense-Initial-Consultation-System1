@@ -1,5 +1,7 @@
+import asyncio
 import os
 import json
+import shutil
 from datetime import datetime
 
 import aiofiles
@@ -364,3 +366,28 @@ class MD5Store:
         except Exception as e:
             _logger.error("读取 chunk MD5 时出错: %s", e)
             return set()
+
+    async def clear_all(self):
+        """清空所有 MD5 记录（用于超管清空整个知识库）。
+
+        删除用户 MD5 目录和公共 MD5 目录，并重建空目录以确保后续正常使用。
+        """
+        user_md5_dir = os.path.join(self.base_dir, 'user_md5')
+        public_md5_dir = os.path.join(self.base_dir, 'public_md5')
+
+        if await aio_os.path.exists(user_md5_dir):
+            try:
+                await asyncio.to_thread(shutil.rmtree, user_md5_dir)
+                await asyncio.to_thread(os.makedirs, user_md5_dir, exist_ok=True)
+                _logger.info("已清空并重建用户 MD5 目录")
+            except Exception as e:
+                _logger.error("清空用户 MD5 目录时出错: %s", e)
+
+        if await aio_os.path.exists(public_md5_dir):
+            md5_path = os.path.join(public_md5_dir, 'md5_hex_store.txt')
+            if await aio_os.path.exists(md5_path):
+                await aio_os.remove(md5_path)
+            _logger.info("已清空公共 MD5 记录")
+
+        _logger.info("已完成所有 MD5 记录清空")
+

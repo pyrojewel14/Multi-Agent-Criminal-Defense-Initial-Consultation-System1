@@ -43,17 +43,6 @@ class AppException(Exception):
         super().__init__(self.message)
 
 
-class SessionNotFoundException(AppException):
-    """Raised when a consultation session ID is not found in the store."""
-
-    code = ErrorCode.SESSION_NOT_FOUND
-    status_code = 404
-    message = "会话不存在或已过期"
-
-    def __init__(self, session_id: str):
-        super().__init__(detail=f"Session not found: {session_id}")
-
-
 class ConsentRequiredException(AppException):
     """Raised when a client attempts to proceed without privacy consent."""
 
@@ -110,22 +99,11 @@ class LLMTimeoutException(AppException):
 
 
 class UnauthorizedException(AppException):
-    """Raised when the X-Session-ID header is missing, invalid, or expired."""
+    """Raised when the JWT token is missing, invalid, or expired."""
 
     code = ErrorCode.UNAUTHORIZED
     status_code = 401
-    message = "会话验证失败，请重新开始咨询"
+    message = "身份验证失败，请重新登录"
 
     def __init__(self, detail: str = ""):
         super().__init__(detail=detail)
-
-
-class SessionExpiredException(AppException):
-    """Raised when the session has exceeded its TTL and must be recreated."""
-
-    code = ErrorCode.SESSION_EXPIRED
-    status_code = 401
-    message = "会话已过期，请重新开始咨询"
-
-    def __init__(self, session_id: str):
-        super().__init__(detail=f"Session expired: {session_id}")

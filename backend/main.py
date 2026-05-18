@@ -1,30 +1,43 @@
-import time
+import os
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
-from starlette.middleware.cors import CORSMiddleware
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
-from app.v1.router.consultation import consultation_router
-from app.v1.router.knowledge_router import knowledge_router
 from app.errors.register import register_exception_handlers
+from app.db.db_config import init_db, close_db
+from app.db.redis_config import init_redis, close_redis
+from app.v1.router.auth_router import auth_router, user_router, lawyer_router
+from app.v1.router.knowledge_router import knowledge_router
+from app.v1.router.consultation_history import consultation_router
+from app.security.rbac import attach_user_to_request
 from app.utils.logger import get_logger
 
 load_dotenv()
 
-_logger = get_logger("main")
-
-app = FastAPI(title="Criminal Defense Consultation System MVP")
+_logger = get_logger("Main")
 
 
-@app.middleware("http")
-async def add_process_time_header(request: Request, call_next):
-    """Add X-Process-Time header to every response for performance monitoring."""
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    response.headers["X-Process-Time"] = str(round(process_time, 4))
-    return response
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _logger.info("Starting up application...")
+    await init_db()
+    await init_redis()
+    _logger.info("Database and Redis initialized")
+    yield
+    _logger.info("Shutting down application...")
+    await close_redis()
+    await close_db()
+    _logger.info("Cleanup completed")
 
+
+app = FastAPI(
+    title="刑事辩护初期咨询系统",
+    description="多 Agent 驱动的法律咨询系统 API",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,20 +47,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(consultation_router, prefix="/api/v1")
-app.include_router(knowledge_router, prefix="/api/v1")
+app.middleware("http")(attach_user_to_request)
 
 register_exception_handlers(app)
 
-
-@app.on_event("startup")
-async def startup_event():
-    """Log application startup."""
-    _logger.info("Application starting")
+app.include_router(auth_router, prefix="/api/v1")
+app.include_router(user_router, prefix="/api/v1")
+app.include_router(lawyer_router, prefix="/api/v1")
+app.include_router(knowledge_router, prefix="/api/v1")
+app.include_router(consultation_router, prefix="/api/v1")
 
 
 @app.get("/")
 async def root():
-    """Health-check endpoint."""
-    _logger.debug("GET / health check")
-    return {"message": "Criminal Defense Consultation System MVP - Running"}
+    return {"message": "刑事辩护初期咨询系统 API", "version": "1.0.0"}
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

@@ -63,6 +63,18 @@ async def close_redis() -> None:
         _logger.info("Redis connection pool closed")
 
 
+async def init_redis() -> None:
+    """Initialize Redis connection pool"""
+    pool = _get_pool()
+    try:
+        client = redis.Redis(connection_pool=pool)
+        await client.ping()
+        _logger.info("Redis connection initialized successfully")
+    except Exception as e:
+        _logger.error("Failed to initialize Redis connection: %s", e)
+        raise
+
+
 async def get_redis_cache_str(key: str) -> Optional[str]:
     """Retrieve a string value from Redis by key."""
     try:

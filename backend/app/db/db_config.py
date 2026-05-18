@@ -53,9 +53,14 @@ async def check_mysql_connection() -> bool:
     """检查MySQL连接"""
     try:
         async with async_engine.connect() as conn:
-            # 执行简单查询
             await conn.execute(text("SELECT 1"))
         return True
     except Exception as e:
         print(f"MySQL连接失败: {e}")
         return False
+
+
+async def close_db() -> None:
+    """关闭数据库连接池"""
+    await async_engine.dispose()
+    print("数据库连接已关闭")

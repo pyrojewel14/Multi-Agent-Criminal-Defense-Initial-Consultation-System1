@@ -104,12 +104,13 @@ class DocumentProcessor:
         """
         return self.spliter.split_documents_sync(documents)
 
-    async def get_document(self, files: list = None, user_id: str = None, progress_callback=None):
+    async def get_document(self, files: list = None, user_id: str = None, is_public: bool = False, progress_callback=None):
         """处理文档并将其转为向量存入向量数据库。
 
         Args:
             files: 上传的文件列表，如果为 None 则从数据文件夹读取。
             user_id: 用户 ID，用于标记文档的所有者。
+            is_public: 是否为公共文档，公共文档可供所有用户检索。
             progress_callback: 进度回调函数，用于实时返回处理进度。
         """
         file_paths = []
@@ -218,6 +219,7 @@ class DocumentProcessor:
                 for doc in document:
                     doc.metadata['original_filename'] = filename
                     doc.metadata['md5'] = md5_hex
+                    doc.metadata['is_public'] = is_public
 
                 existing_chunk_md5s = await self.md5_store.get_all_chunk_md5(user_id)
                 unique_docs = []

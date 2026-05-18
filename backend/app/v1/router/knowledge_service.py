@@ -49,7 +49,7 @@ class ProcessingState:
         return int(min(99, slice_progress + write_progress))
 
 
-def _sync_slice_file(file_content: bytes, filename: str, file_index: int, user_id: str, queue: TaskQueue):
+def _sync_slice_file(file_content: bytes, filename: str, file_index: int, user_id: str, is_public: bool, queue: TaskQueue):
     """在 ThreadPoolExecutor 中执行的同步切片函数。"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(filename)[1]) as temp_file:
@@ -73,6 +73,7 @@ def _sync_slice_file(file_content: bytes, filename: str, file_index: int, user_i
                 doc.metadata['user_id'] = user_id
                 doc.metadata['original_filename'] = filename
                 doc.metadata['md5'] = md5_hex
+                doc.metadata['is_public'] = is_public
 
             queue.put(SliceResult.success_result(
                 file_index=file_index, filename=filename, documents=split_docs, md5=md5_hex
@@ -88,12 +89,13 @@ def _sync_slice_file(file_content: bytes, filename: str, file_index: int, user_i
 class KnowledgeService:
     """知识库管理服务"""
 
-    async def handle_add_vector_single(self, file: UploadFile, user_id: str) -> str:
+    async def handle_add_vector_single(self, file: UploadFile, user_id: str, is_public: bool = False) -> str:
         """处理添加单个向量逻辑。
 
         Args:
             file: 上传的文件。
             user_id: 用户 ID。
+            is_public: 是否为公共文档。
 
         Returns:
             文件名。
@@ -117,15 +119,16 @@ class KnowledgeService:
                 detail=f"文件类型不支持，目前支持 PDF、TXT、Markdown、PPTX、DOCX 文件类型。检测到的文件类型: {file_type}，扩展名: {file_extension}"
             )
 
-        await store.get_document(files=[file], user_id=user_id)
+        await store.get_document(files=[file], user_id=user_id, is_public=is_public)
         return file.filename
 
-    async def handle_add_vector_multiple(self, files: List[UploadFile], user_id: str) -> List[str]:
+    async def handle_add_vector_multiple(self, files: List[UploadFile], user_id: str, is_public: bool = False) -> List[str]:
         """处理添加多个向量逻辑。
 
         Args:
             files: 上传的文件列表。
             user_id: 用户 ID。
+            is_public: 是否为公共文档。
 
         Returns:
             文件名列表。
@@ -141,7 +144,7 @@ class KnowledgeService:
         results = []
         for file in files:
             try:
-                await self.handle_add_vector_single(file, user_id)
+                await self.handle_add_vector_single(file, user_id, is_public)
                 results.append(file.filename)
             except Exception as e:
                 _logger.error("添加向量处理文件出错: filename=%s, error=%s", file.filename, e)
@@ -302,13 +305,14 @@ class KnowledgeService:
         return valid_files, error_events, total_files
 
     def _start_slicing(
-        self, valid_files: List[dict], user_id: str
+        self, valid_files: List[dict], user_id: str, is_public: bool = False
     ) -> tuple[TaskQueue, ThreadPoolExecutor, list]:
         """启动多线程切片，返回 (队列, 执行器, future 列表)。
 
         Args:
             valid_files: 有效文件列表。
             user_id: 用户 ID。
+            is_public: 是否为公共文档。
 
         Returns:
             (队列, 执行器, future 列表)。
@@ -317,7 +321,7 @@ class KnowledgeService:
         queue.set_total_count(len(valid_files))
 
         slice_tasks = [
-            (info['content'], info['filename'], info['file_index'], user_id)
+            (info['content'], info['filename'], info['file_index'], user_id, is_public)
             for info in valid_files
         ]
 
@@ -331,7 +335,7 @@ class KnowledgeService:
 
     async def _process_slice_results(
         self, queue: TaskQueue, valid_count: int, store: VectorStoreService,
-        state: ProcessingState, user_id: str
+        state: ProcessingState, user_id: str, is_public: bool = False
     ) -> AsyncGenerator[str, None]:
         """消费切片队列 → 写入向量库 → yield SSE 进度事件。
 
@@ -341,6 +345,7 @@ class KnowledgeService:
             store: 向量存储服务。
             state: 处理状态。
             user_id: 用户 ID。
+            is_public: 是否为公共文档。
         """
         while state.written_count < valid_count:
             try:
@@ -385,13 +390,15 @@ class KnowledgeService:
     async def handle_add_vector_multiple_stream(
         self,
         files: List[UploadFile],
-        user_id: str
+        user_id: str,
+        is_public: bool = False
     ) -> AsyncGenerator[str, None]:
         """处理多个文件上传并返回流式进度（多线程切片 + 单线程串行写入）。
 
         Args:
             files: 上传的文件列表。
             user_id: 用户 ID。
+            is_public: 是否为公共文档。
 
         Yields:
             SSE 事件字符串。
@@ -415,10 +422,10 @@ class KnowledgeService:
             total_valid=len(valid_files)
         )
 
-        queue, executor, _ = self._start_slicing(valid_files, user_id)
+        queue, executor, _ = self._start_slicing(valid_files, user_id, is_public)
 
         store = get_vector_store()
-        async for sse in self._process_slice_results(queue, len(valid_files), store, state, user_id):
+        async for sse in self._process_slice_results(queue, len(valid_files), store, state, user_id, is_public):
             yield sse
 
         executor.shutdown(wait=True)

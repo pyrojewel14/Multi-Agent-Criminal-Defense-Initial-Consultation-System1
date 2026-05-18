@@ -90,17 +90,18 @@ class VectorStoreService:
         """
         return await self.hybrid_retriever._get_all_documents()
 
-    async def get_retriever(self, query: str = None, user_id: str = None):
+    async def get_retriever(self, query: str = None, user_id: str = None, include_public: bool = False):
         """获取检索器。
 
         Args:
             query: 查询语句。
             user_id: 用户 ID。
+            include_public: 是否包含公共文档。
 
         Returns:
             检索器实例。
         """
-        return await self.hybrid_retriever.get_retriever(query, user_id)
+        return await self.hybrid_retriever.get_retriever(query, user_id, include_public)
 
     @staticmethod
     def get_dynamic_weights(query: str = None):
@@ -489,15 +490,16 @@ class VectorStoreService:
         """
         return self.document_processor.split_documents_sync(documents)
 
-    async def get_document(self, files: list = None, user_id: str = None, progress_callback=None):
+    async def get_document(self, files: list = None, user_id: str = None, is_public: bool = False, progress_callback=None):
         """获取文档。
 
         Args:
             files: 上传的文件列表。
             user_id: 用户 ID。
+            is_public: 是否为公共文档。
             progress_callback: 进度回调函数。
         """
-        await self.document_processor.get_document(files, user_id, progress_callback)
+        await self.document_processor.get_document(files, user_id, is_public, progress_callback)
 
 
 if __name__ == '__main__':

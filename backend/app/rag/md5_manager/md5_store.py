@@ -375,19 +375,21 @@ class MD5Store:
         user_md5_dir = os.path.join(self.base_dir, 'user_md5')
         public_md5_dir = os.path.join(self.base_dir, 'public_md5')
 
-        if await aio_os.path.exists(user_md5_dir):
+        if os.path.exists(user_md5_dir):
             try:
                 await asyncio.to_thread(shutil.rmtree, user_md5_dir)
-                await asyncio.to_thread(os.makedirs, user_md5_dir, exist_ok=True)
+                os.makedirs(user_md5_dir, exist_ok=True)
                 _logger.info("已清空并重建用户 MD5 目录")
             except Exception as e:
                 _logger.error("清空用户 MD5 目录时出错: %s", e)
 
-        if await aio_os.path.exists(public_md5_dir):
-            md5_path = os.path.join(public_md5_dir, 'md5_hex_store.txt')
-            if await aio_os.path.exists(md5_path):
-                await aio_os.remove(md5_path)
-            _logger.info("已清空公共 MD5 记录")
+        if os.path.exists(public_md5_dir):
+            try:
+                await asyncio.to_thread(shutil.rmtree, public_md5_dir)
+                os.makedirs(public_md5_dir, exist_ok=True)
+                _logger.info("已清空并重建公共 MD5 目录")
+            except Exception as e:
+                _logger.error("清空公共 MD5 目录时出错: %s", e)
 
         _logger.info("已完成所有 MD5 记录清空")
 

@@ -5,14 +5,14 @@ from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.db.db_config import close_db, init_db
+from app.db.redis_config import close_redis, init_redis
 from app.errors.register import register_exception_handlers
-from app.db.db_config import init_db, close_db
-from app.db.redis_config import init_redis, close_redis
-from app.v1.router.auth_router import auth_router, user_router, lawyer_router
-from app.v1.router.knowledge_router import knowledge_router
-from app.v1.router.consultation_history import consultation_router
 from app.security.rbac import attach_user_to_request
 from app.utils.logger import get_logger
+from app.v1.router.auth_router import auth_router, lawyer_router, user_router
+from app.v1.router.consultation_history import consultation_router
+from app.v1.router.knowledge_router import knowledge_router
 
 load_dotenv()
 
@@ -70,4 +70,5 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

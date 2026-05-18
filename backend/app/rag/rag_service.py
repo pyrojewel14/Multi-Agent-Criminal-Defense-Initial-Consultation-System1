@@ -27,15 +27,16 @@ def _deduplicate_documents(documents: list) -> list:
 
 
 class RagService:
-    def __init__(self, user_id: str = None, thinking_callback=None):
+    def __init__(self, user_id: str = None, thinking_callback=None, include_public: bool = True):
         self.vector_store = get_vector_store()
         self.retriever = None
         self.user_id = user_id
+        self.include_public = include_public
         self.prompt_text = prompt_loader.load("rag_summary_prompt")
         self.prompt_template = PromptTemplate.from_template(self.prompt_text)
         self.chat_model = chat_model
         self.chain = self._init_chain()
-        self.hyde_prompt_template = PromptTemplate.from_template("基于以下问题，生成一个详细的假设性回答，我会根据你的这个假设性回答在向量数据库里检索文档：\n\n问题：{query}\n\n假设性回答：")
+        self.hyde_prompt_template = PromptTemplate.from_template("基于以下问题，生成一个详细的假设性回答，我会根据你的假设性回答在向量数据库里检索文档：\n\n问题：{query}\n\n假设性回答：")
         self.thinking_callback = thinking_callback
 
     async def initialize_retriever(self, query: str = None):
@@ -58,7 +59,7 @@ class RagService:
                     }
                 })
 
-            self.retriever = await self.vector_store.get_retriever(query, self.user_id)
+            self.retriever = await self.vector_store.get_retriever(query, self.user_id, self.include_public)
 
 
     def _init_chain(self):
@@ -141,7 +142,7 @@ class RagService:
                     "content": "正在向量数据库中检索相关文档..."
                 })
 
-            hyde_retriever = await self.vector_store.get_retriever(hypothetical_doc, self.user_id)
+            hyde_retriever = await self.vector_store.get_retriever(hypothetical_doc, self.user_id, self.include_public)
             documents = await hyde_retriever.ainvoke(hypothetical_doc)
             documents = _deduplicate_documents(documents)
             _logger.info("HyDE 检索到 %d 个相关文档", len(documents))

@@ -16,25 +16,41 @@ class HybridRetriever:
     def __init__(self, vectors_store: Chroma):
         self.vectors_store = vectors_store
 
-    async def get_bm25_retriever(self, user_id: str = None):
+    async def get_bm25_retriever(self, user_id: str = None, include_public: bool = False):
         """获取 BM25 检索器。
 
         Args:
             user_id: 用户 ID，必须提供，否则返回 None。
+            include_public: 是否包含公共文档。
 
         Returns:
             BM25Retriever 实例。
         """
-        if not user_id:
+        if not user_id and not include_public:
             return None
+
+        if user_id and include_public:
+            where_filter = None
+        elif user_id:
+            where_filter = {'user_id': user_id}
+        else:
+            where_filter = {'is_public': True}
 
         all_docs_result = await asyncio.to_thread(
             self.vectors_store.get,
             include=['documents', 'metadatas'],
-            where={'user_id': user_id}
+            where=where_filter
         )
+
+        if not all_docs_result['documents']:
+            return None
+
         documents = []
+        seen_content = set()
         for i, doc_content in enumerate(all_docs_result['documents']):
+            if doc_content in seen_content:
+                continue
+            seen_content.add(doc_content)
             metadata = all_docs_result['metadatas'][i] if i < len(all_docs_result['metadatas']) else {}
             documents.append(Document(page_content=doc_content, metadata=metadata))
 
@@ -64,21 +80,28 @@ class HybridRetriever:
             documents.append(Document(page_content=doc, metadata=metadata))
         return documents
 
-    async def get_retriever(self, query: str = None, user_id: str = None) -> BaseRetriever:
+    async def get_retriever(self, query: str = None, user_id: str = None, include_public: bool = False) -> BaseRetriever:
         """获取混合检索器（BM25 + 向量检索）。
 
         Args:
             query: 查询语句，用于动态调整权重。
-            user_id: 用户 ID，用于过滤用户的文档，为空时不返回任何文档。
+            user_id: 用户 ID，用于过滤用户的文档，为空时只返回公共文档（若 include_public=True）。
+            include_public: 是否包含公共文档。
 
         Returns:
             EnsembleRetriever 实例或单独的向量检索器。
         """
-        if not user_id:
+        if not user_id and not include_public:
             return EmptyRetriever()
 
-        filter_dict = {'user_id': user_id}
         query_length = len(query) if query else 0
+
+        if user_id and include_public:
+            filter_dict = {'$or': [{'user_id': user_id}, {'is_public': True}]}
+        elif user_id:
+            filter_dict = {'user_id': user_id}
+        else:
+            filter_dict = {'is_public': True}
 
         if query_length >= 200:
             vector_retriever = self.vectors_store.as_retriever(
@@ -93,7 +116,7 @@ class HybridRetriever:
             search_kwargs={'k': vec_k, 'filter': filter_dict},
         )
 
-        bm25_retriever = await self.get_bm25_retriever(user_id)
+        bm25_retriever = await self.get_bm25_retriever(user_id, include_public)
 
         if bm25_retriever:
             weights = self.get_dynamic_weights(query)

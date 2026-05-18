@@ -1,7 +1,7 @@
 from typing import List
 
 from fastapi.routing import APIRouter
-from fastapi import UploadFile, File, Depends, HTTPException
+from fastapi import UploadFile, File, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 
 from app.v1.router.knowledge_service import KnowledgeService, get_knowledge_service
@@ -18,40 +18,57 @@ knowledge_router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 @knowledge_router.post("/add/single")
 async def add_vector_single(
         file: UploadFile = File(...),
+        is_public: bool = Query(default=False, description="是否设为公共文档，公共文档可供所有用户检索"),
         current_user: dict = Depends(require_admin),
         knowledge_service: KnowledgeService = Depends(get_knowledge_service),
         _: None = Depends(rate_limit(limit=5, window=60))
 ):
-    """上传文件到知识库，仅超管可操作。"""
+    """上传文件到知识库，仅超管可操作。
+
+    Args:
+        is_public: 是否设为公共文档，设为公共后可供所有用户检索。
+    """
     user_id = current_user["user_id"]
-    filename = await knowledge_service.handle_add_vector_single(file, user_id)
-    return success_response(message=f"文件 {filename} 已成功上传并存储到向量数据库")
+    filename = await knowledge_service.handle_add_vector_single(file, user_id, is_public)
+    visibility = "公共" if is_public else "私人"
+    return success_response(message=f"文件 {filename} 已成功上传为{visibility}文档并存储到向量数据库")
 
 
 @knowledge_router.post("/add/multiple")
 async def add_vector_multiple(
         files: List[UploadFile] = File(..., description="要上传的文件列表"),
+        is_public: bool = Query(default=False, description="是否设为公共文档，公共文档可供所有用户检索"),
         current_user: dict = Depends(require_admin),
         knowledge_service: KnowledgeService = Depends(get_knowledge_service),
         _: None = Depends(rate_limit(limit=3, window=60))
 ):
-    """上传多个文件到知识库，仅超管可操作。"""
+    """上传多个文件到知识库，仅超管可操作。
+
+    Args:
+        is_public: 是否设为公共文档，设为公共后可供所有用户检索。
+    """
     user_id = current_user["user_id"]
-    filenames = await knowledge_service.handle_add_vector_multiple(files, user_id)
-    return success_response(message=f"文件 {filenames} 已成功上传并存储到向量数据库")
+    filenames = await knowledge_service.handle_add_vector_multiple(files, user_id, is_public)
+    visibility = "公共" if is_public else "私人"
+    return success_response(message=f"文件 {filenames} 已成功上传为{visibility}文档并存储到向量数据库")
 
 
 @knowledge_router.post("/add/multiple/stream")
 async def add_vector_multiple_stream(
         files: List[UploadFile] = File(..., description="要上传的文件列表"),
+        is_public: bool = Query(default=False, description="是否设为公共文档，公共文档可供所有用户检索"),
         current_user: dict = Depends(require_admin),
         knowledge_service: KnowledgeService = Depends(get_knowledge_service),
         _: None = Depends(rate_limit(limit=3, window=60))
 ):
-    """上传多个文件，流式返回处理进度，仅超管可操作。"""
+    """上传多个文件，流式返回处理进度，仅超管可操作。
+
+    Args:
+        is_public: 是否设为公共文档，设为公共后可供所有用户检索。
+    """
     user_id = current_user["user_id"]
     return StreamingResponse(
-        knowledge_service.handle_add_vector_multiple_stream(files, user_id),
+        knowledge_service.handle_add_vector_multiple_stream(files, user_id, is_public),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

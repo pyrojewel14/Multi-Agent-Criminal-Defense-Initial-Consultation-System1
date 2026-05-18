@@ -19,7 +19,7 @@ from app.v1.schemas.consultation_schemas import (
     UpdateStatusRequest,
 )
 
-_logger = get_logger("ConsultationRouter")
+_logger = get_logger("Router.Consultation")
 
 consultation_router = APIRouter(prefix="/consultations", tags=["consultations"])
 
@@ -28,6 +28,15 @@ async def _build_consultation_response(
     consultation: Consultation,
     db: AsyncSession
 ) -> ConsultationResponse:
+    """构建咨询响应对象。
+
+    Args:
+        consultation: 咨询记录。
+        db: 数据库会话。
+
+    Returns:
+        咨询响应对象。
+    """
     client_result = await db.execute(select(User).where(User.id == consultation.client_id))
     client = client_result.scalar_one_or_none()
     
@@ -65,22 +74,40 @@ async def list_consultations(
     db: AsyncSession = Depends(get_db),
 ):
     """获取咨询列表，根据用户角色返回不同范围的咨询记录。
-    
-    - 超管(admin): 可查看所有咨询记录
-    - 律师(lawyer): 可查看分配给自己的咨询记录
-    - 客户(client): 可查看自己的咨询记录
+
+    Args:
+        page: 页码。
+        page_size: 每页记录数。
+        status: 按状态过滤。
+        current_user: 当前认证用户。
+        db: 数据库会话。
+
+    Returns:
+        咨询列表响应。
     """
+    _logger.info(
+        "【list_consultations】咨询列表查询: user_id=%s, role=%s, page=%s, page_size=%s, status=%s",
+        current_user["user_id"],
+        current_user["role"],
+        page,
+        page_size,
+        status
+    )
+    
     offset = (page - 1) * page_size
     
     if current_user["role"] == "admin":
         query = select(Consultation)
         count_query = select(Consultation)
+        _logger.debug("【list_consultations】超管查询: 获取所有咨询")
     elif current_user["role"] == "lawyer":
         query = select(Consultation).where(Consultation.assigned_lawyer_id == current_user["user_id"])
         count_query = select(Consultation).where(Consultation.assigned_lawyer_id == current_user["user_id"])
+        _logger.debug("【list_consultations】律师查询: user_id=%s", current_user["user_id"])
     else:
         query = select(Consultation).where(Consultation.client_id == current_user["user_id"])
         count_query = select(Consultation).where(Consultation.client_id == current_user["user_id"])
+        _logger.debug("【list_consultations】客户查询: user_id=%s", current_user["user_id"])
     
     if status:
         query = query.where(Consultation.status == ConsultationStatus(status))
@@ -97,6 +124,8 @@ async def list_consultations(
     for c in consultations:
         response_list.append(await _build_consultation_response(c, db))
     
+    _logger.info("【list_consultations】咨询列表查询成功: total=%s, 返回数量=%s", total, len(response_list))
+    
     return success_response(data=ConsultationListResponse(
         consultations=response_list,
         total=total,
@@ -111,7 +140,16 @@ async def get_consultation(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取咨询详情，根据用户角色进行权限验证。"""
+    """获取咨询详情，根据用户角色进行权限验证。
+
+    Args:
+        consultation_id: 咨询 ID。
+        current_user: 当前认证用户。
+        db: 数据库会话。
+
+    Returns:
+        咨询详情响应。
+    """
     result = await db.execute(select(Consultation).where(Consultation.id == consultation_id))
     consultation = result.scalar_one_or_none()
     
@@ -133,7 +171,16 @@ async def get_consultation_messages(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取咨询的所有消息记录。"""
+    """获取咨询的所有消息记录。
+
+    Args:
+        consultation_id: 咨询 ID。
+        current_user: 当前认证用户。
+        db: 数据库会话。
+
+    Returns:
+        消息列表响应。
+    """
     consultation_result = await db.execute(select(Consultation).where(Consultation.id == consultation_id))
     consultation = consultation_result.scalar_one_or_none()
     
@@ -165,9 +212,14 @@ async def assign_lawyer(
     """超管将咨询分配给律师。
 
     Args:
-        consultation_id: 咨询记录ID
-        lawyer_id: 律师ID
+        request: 分配律师请求参数。
+        db: 数据库会话。
+
+    Returns:
+        分配成功消息。
     """
+    _logger.info("【assign_lawyer】分配律师请求: consultation_id=%s, lawyer_id=%s", request.consultation_id, request.lawyer_id)
+    
     consultation_id = request.consultation_id
     lawyer_id = request.lawyer_id
 
@@ -177,18 +229,20 @@ async def assign_lawyer(
     lawyer = lawyer_result.scalar_one_or_none()
 
     if not lawyer:
+        _logger.warning("【assign_lawyer】分配失败: 律师不存在 lawyer_id=%s", lawyer_id)
         raise HTTPException(status_code=404, detail="律师不存在")
 
     consultation_result = await db.execute(select(Consultation).where(Consultation.id == consultation_id))
     consultation = consultation_result.scalar_one_or_none()
 
     if not consultation:
+        _logger.warning("【assign_lawyer】分配失败: 咨询记录不存在 consultation_id=%s", consultation_id)
         raise HTTPException(status_code=404, detail="咨询记录不存在")
 
     consultation.assigned_lawyer_id = lawyer_id
     await db.commit()
 
-    _logger.info("咨询分配律师: consultation_id=%s, lawyer_id=%s", consultation_id, lawyer_id)
+    _logger.info("【assign_lawyer】咨询分配律师成功: consultation_id=%s, lawyer_id=%s, lawyer_name=%s", consultation_id, lawyer_id, lawyer.real_name)
 
     return success_response(message=f"已将咨询分配给律师 {lawyer.real_name}")
 
@@ -200,24 +254,47 @@ async def update_consultation_status(
     current_user: dict = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """更新咨询状态。律师和超管可以更新状态。"""
+    """更新咨询状态。律师和超管可以更新状态。
+
+    Args:
+        consultation_id: 咨询 ID。
+        request: 更新状态请求参数。
+        current_user: 当前认证用户。
+        db: 数据库会话。
+
+    Returns:
+        更新成功消息。
+    """
+    _logger.info(
+        "【update_consultation_status】更新咨询状态请求: consultation_id=%s, new_status=%s, user_id=%s, role=%s",
+        consultation_id,
+        request.status,
+        current_user["user_id"],
+        current_user["role"]
+    )
+    
     if current_user["role"] == "client":
+        _logger.warning("【update_consultation_status】权限不足: 客户无权修改咨询状态 user_id=%s", current_user["user_id"])
         raise HTTPException(status_code=403, detail="客户无权修改咨询状态")
     
     result = await db.execute(select(Consultation).where(Consultation.id == consultation_id))
     consultation = result.scalar_one_or_none()
     
     if not consultation:
+        _logger.warning("【update_consultation_status】咨询记录不存在 consultation_id=%s", consultation_id)
         raise HTTPException(status_code=404, detail="咨询记录不存在")
     
     if current_user["role"] == "lawyer" and consultation.assigned_lawyer_id != current_user["user_id"]:
+        _logger.warning("【update_consultation_status】权限不足: 律师只能修改分配给自己的咨询 user_id=%s", current_user["user_id"])
         raise HTTPException(status_code=403, detail="只能修改分配给自己的咨询状态")
     
     try:
         new_status = ConsultationStatus(request.status)
     except ValueError:
+        _logger.warning("【update_consultation_status】无效的状态值: %s", request.status)
         raise HTTPException(status_code=400, detail="无效的状态值")
     
+    old_status = consultation.status.value if consultation.status else None
     consultation.status = new_status
     
     if new_status == ConsultationStatus.COMPLETED:
@@ -225,6 +302,6 @@ async def update_consultation_status(
     
     await db.commit()
     
-    _logger.info("咨询状态更新: consultation_id=%s, new_status=%s", consultation_id, request.status)
+    _logger.info("【update_consultation_status】咨询状态更新成功: consultation_id=%s, old_status=%s, new_status=%s", consultation_id, old_status, request.status)
     
     return success_response(message=f"咨询状态已更新为 {request.status}")

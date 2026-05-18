@@ -8,7 +8,7 @@ load_dotenv()
 
 
 class ConfigLoader:
-    _logger = get_logger("ConfigLoader")
+    _logger = get_logger("Utils.ConfigLoader")
 
     @staticmethod
     def load_yaml(

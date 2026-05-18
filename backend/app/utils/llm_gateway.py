@@ -15,7 +15,7 @@ class LLMGateway:
     def __init__(self):
         """初始化 LLM 网关。"""
         self._logger = get_logger("LLMGateway")
-        self._logger.info("LLM 网关初始化完成")
+        self._logger.info("【__init__】LLM 网关初始化完成")
 
     async def generate(
         self,
@@ -41,7 +41,7 @@ class LLMGateway:
         """
         actual_temp = 0.0 if is_legal else temperature
         self._logger.debug(
-            "LLM 调用: temp=%.2f, is_legal=%s, msg_len=%d",
+            "【generate】LLM 调用: temp=%.2f, is_legal=%s, msg_len=%d",
             actual_temp, is_legal, len(user_message),
         )
 
@@ -54,14 +54,14 @@ class LLMGateway:
             model = chat_model_factory.create_model(actual_temp)
             response = await model.ainvoke(messages)
         except TimeoutError as e:
-            self._logger.error("LLM 超时: %s", e)
+            self._logger.error("【generate】LLM 超时: %s", e)
             raise LLMTimeoutException(detail=str(e)) from e
         except Exception as e:
-            self._logger.error("LLM 服务错误: %s", e)
+            self._logger.error("【generate】LLM 服务错误: %s", e)
             raise LLMServiceException(detail=str(e)) from e
 
         content = response.content
-        self._logger.debug("LLM 响应: len=%d", len(content))
+        self._logger.debug("【generate】LLM 响应: len=%d", len(content))
         return content
 
 

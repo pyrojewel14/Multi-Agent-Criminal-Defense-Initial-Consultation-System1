@@ -12,7 +12,7 @@ from app.utils.logger import get_logger
 
 load_dotenv()
 
-_logger = get_logger("ModelFactory")
+_logger = get_logger("Factory")
 
 
 class DashScopeEmbeddingsWrapper(Embeddings):
@@ -65,7 +65,7 @@ class DashScopeEmbeddingsWrapper(Embeddings):
                 )
                 all_embeddings.extend([item.embedding for item in response.data])
             except Exception as e:
-                _logger.error("DashScope embedding 批量错误 (batch %d-%d): %s", i, i + len(batch), e)
+                _logger.error("【embed_documents】DashScope embedding 批量错误 (batch %d-%d): %s", i, i + len(batch), e)
                 raise LLMServiceException(detail=f"DashScope embedding 批量错误: {e}") from e
 
         return all_embeddings
@@ -86,7 +86,7 @@ class DashScopeEmbeddingsWrapper(Embeddings):
             )
             return response.data[0].embedding
         except Exception as e:
-            _logger.error("DashScope embedding 错误: %s", e)
+            _logger.error("【embed_query】DashScope embedding 错误: %s", e)
             raise LLMServiceException(detail=f"DashScope embedding 错误: {e}") from e
 
 
@@ -188,7 +188,7 @@ class ChatModelFactory(BaseModelFactory):
         model_name = ollama_config.get("model", os.getenv("OLLAMA_MODEL_NAME", "qwen3:7b"))
         base_url = ollama_config.get("base_url", os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
 
-        _logger.info("ChatModel 使用 Ollama: model=%s, base_url=%s", model_name, base_url)
+        _logger.info("【_create_ollama_model】ChatModel 使用 Ollama: model=%s, base_url=%s", model_name, base_url)
 
         params = {"model": model_name, "base_url": base_url}
         if temperature is not None:
@@ -225,7 +225,7 @@ class ChatModelFactory(BaseModelFactory):
         api_key = aliyun_config.get("api_key", os.getenv("ALIYUN_ACCESS_KEY_SECRET"))
         base_url = aliyun_config.get("base_url", os.getenv("ALIYUN_BASE_URL"))
 
-        _logger.info("ChatModel 使用阿里云百炼: model=%s", model_name)
+        _logger.info("【_create_aliyun_model】ChatModel 使用阿里云百炼: model=%s", model_name)
 
         params = {"model": model_name, "api_key": api_key}
         if base_url:
@@ -275,7 +275,7 @@ class EmbedModelFactory(BaseModelFactory):
         model_name = os.getenv("TEXT_EMBEDDING_MODEL_NAME", "qwen3-embedding:0.6b")
         base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
-        _logger.info("EmbedModel 使用 Ollama: model=%s, base_url=%s", model_name, base_url)
+        _logger.info("【_create_ollama_embeddings】EmbedModel 使用 Ollama: model=%s, base_url=%s", model_name, base_url)
 
         return OllamaEmbeddings(model=model_name, base_url=base_url)
 
@@ -288,7 +288,7 @@ class EmbedModelFactory(BaseModelFactory):
         model_name = os.getenv("ALIYUN_EMBED_MODEL_NAME", "text-embedding-v4")
         api_key = os.getenv("DASHSCOPE_API_KEY") or os.getenv("ALIYUN_ACCESS_KEY_SECRET")
 
-        _logger.info("EmbedModel 使用阿里云百炼: model=%s", model_name)
+        _logger.info("【_create_aliyun_embeddings】EmbedModel 使用阿里云百炼: model=%s", model_name)
 
         return DashScopeEmbeddingsWrapper(model_name=model_name, api_key=api_key)
 

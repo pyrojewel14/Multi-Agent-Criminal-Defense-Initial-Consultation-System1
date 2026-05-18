@@ -2,7 +2,10 @@ from enum import StrEnum
 
 
 class ErrorCode(StrEnum):
-    """Machine-readable error codes for the unified error response format."""
+    """系统错误码枚举。
+
+    用于统一错误响应格式的机器可读错误代码。
+    """
 
     INTERNAL_ERROR = "INTERNAL_ERROR"
     VALIDATION_ERROR = "VALIDATION_ERROR"

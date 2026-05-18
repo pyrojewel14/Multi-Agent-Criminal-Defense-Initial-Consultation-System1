@@ -1,39 +1,41 @@
 import os
-from dotenv import load_dotenv
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy import text
-from app.models.user import Base
 
-# 加载环境变量
+from dotenv import load_dotenv
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.models import Base
+from app.utils.logger import get_logger
+
+_logger = get_logger("DB")
+
 load_dotenv()
 
-# 数据库URL
-ASYNC_DATABASE_URL = f"mysql+aiomysql://{os.getenv('MYSQL_USER', 'root')}:{os.getenv('MYSQL_PASSWORD', '')}@{os.getenv('MYSQL_HOST', 'localhost')}:{os.getenv('MYSQL_PORT', '3306')}/{os.getenv('MYSQL_DATABASE', 'chat_history')}?charset=utf8mb4"
+DATABASE_PATH = os.getenv("DATABASE_PATH", "./data/chat_history.db")
+os.makedirs(os.path.dirname(DATABASE_PATH), exist_ok=True)
 
-# 创建异步引擎
-async_engine = create_async_engine(
-    ASYNC_DATABASE_URL,
-    pool_size=10, # 连接池中保持的持久连接数
-    max_overflow=20, # 连接池中允许创建的额外连接数
-    echo=True # 输出sql日志
-)
+ASYNC_DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
 
-# 创建异步会话工厂
-AsyncSessionLocal = async_sessionmaker(
-    bind=async_engine,
-    class_=AsyncSession,
-    expire_on_commit=False
-)
+async_engine = create_async_engine(ASYNC_DATABASE_URL, echo=False)
 
-# 初始化数据库，创建所有表
+AsyncSessionLocal = async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+
+
 async def init_db():
+    """初始化数据库，创建所有表结构。"""
     async with async_engine.begin() as conn:
-        # 先删除旧表，然后创建新表
-        # await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
 
-# 依赖项
+
 async def get_db():
+    """获取数据库会话的依赖函数。
+
+    Yields:
+        数据库会话对象。
+
+    Raises:
+        Exception: 数据库操作异常时回滚事务。
+    """
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -47,20 +49,22 @@ async def get_db():
             await session.close()
 
 
+async def check_database_connection() -> bool:
+    """检查数据库连接。
 
-
-async def check_mysql_connection() -> bool:
-    """检查MySQL连接"""
+    Returns:
+        连接成功返回 True，失败返回 False。
+    """
     try:
         async with async_engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return True
     except Exception as e:
-        print(f"MySQL连接失败: {e}")
+        _logger.error("【check_database_connection】数据库连接失败: %s", e)
         return False
 
 
 async def close_db() -> None:
-    """关闭数据库连接池"""
+    """关闭数据库连接池。"""
     await async_engine.dispose()
-    print("数据库连接已关闭")
+    _logger.info("【close_db】数据库连接已关闭")

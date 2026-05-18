@@ -1,24 +1,40 @@
-import os, hashlib, aiofiles, asyncio, sys
+import asyncio
+import hashlib
+import json
+import os
+import sys
+
+import aiofiles
+from langchain_community.document_loaders import (
+    JSONLoader,
+    PyPDFLoader,
+    TextLoader,
+    UnstructuredMarkdownLoader,
+    UnstructuredPDFLoader,
+    UnstructuredPowerPointLoader,
+)
 from langchain_core.documents import Document
 
 from app.utils.logger import get_logger
 from app.utils.path_tool import get_abstract_path
-from langchain_community.document_loaders import PyPDFLoader, TextLoader, UnstructuredPDFLoader, UnstructuredMarkdownLoader, UnstructuredPowerPointLoader
 
 _logger = get_logger("FileHandler")
+
 
 class FontBBoxStreamFilter:
     def __init__(self, stream):
         self.stream = stream
 
     def write(self, data):
-        if 'FontBBox from font descriptor' not in data:
+        if "FontBBox from font descriptor" not in data:
             self.stream.write(data)
 
     def flush(self):
         self.stream.flush()
 
+
 sys.stderr = FontBBoxStreamFilter(sys.stderr)
+
 
 async def get_file_md5_hex(file_path: str) -> str:
     """获取文件的 MD5 值。
@@ -51,6 +67,7 @@ async def get_file_md5_hex(file_path: str) -> str:
 
     return md5_object.hexdigest()
 
+
 async def listdir_allowed_type(path: str, allowed_types: tuple[str]) -> tuple:
     """获取指定目录下所有允许的文件类型。
 
@@ -78,7 +95,6 @@ async def listdir_allowed_type(path: str, allowed_types: tuple[str]) -> tuple:
             file_list.append(file_path)
 
     return tuple(file_list)
-
 
 
 async def pdf_loader(file_path: str, password: str = None) -> list[Document]:
@@ -120,7 +136,7 @@ async def txt_loader(file_path: str) -> list[Document]:
     """
     abs_file_path = get_abstract_path(file_path) if not os.path.isabs(file_path) else file_path
 
-    encodings = ['utf-8', 'gbk']
+    encodings = ["utf-8", "gbk"]
     for encoding in encodings:
         try:
             loader = TextLoader(abs_file_path, encoding=encoding)
@@ -129,6 +145,7 @@ async def txt_loader(file_path: str) -> list[Document]:
             _logger.warning("文本文件加载编码失败: encoding=%s, path=%s, error=%s", encoding, abs_file_path, e)
             continue
     return []
+
 
 async def word_loader(file_path: str) -> list[Document]:
     """加载 WORD 文件内容。
@@ -141,11 +158,12 @@ async def word_loader(file_path: str) -> list[Document]:
     """
     abs_file_path = get_abstract_path(file_path) if not os.path.isabs(file_path) else file_path
     try:
-        loader = TextLoader(abs_file_path, encoding='utf-8')
+        loader = TextLoader(abs_file_path, encoding="utf-8")
         return await asyncio.to_thread(loader.load)
     except Exception as e:
         _logger.error("WORD 文件加载失败: %s, %s", abs_file_path, e)
         return []
+
 
 async def markdown_loader(file_path: str) -> list[Document]:
     """加载 Markdown 文件内容。
@@ -183,8 +201,29 @@ async def ppt_loader(file_path: str) -> list[Document]:
         return []
 
 
+async def json_loader(file_path: str, jq_schema: str = ".[] | .content") -> list[Document]:
+    """加载 JSON 文件内容（使用 LangChain Community JSONLoader）。
+
+    Args:
+        file_path: JSON 文件路径。
+        jq_schema: jq 模式，用于从 JSON 中提取内容。默认提取 .content 字段。
+                   对于刑法_cleaned.json，使用 ".[] | .content" 提取所有条文的 content 字段。
+
+    Returns:
+        JSON 文件内容列表。
+    """
+    abs_file_path = get_abstract_path(file_path) if not os.path.isabs(file_path) else file_path
+    try:
+        loader = JSONLoader(file_path=abs_file_path, jq_schema=jq_schema)
+        return loader.load()
+    except Exception as e:
+        _logger.error("JSON 文件加载失败: %s, %s", abs_file_path, e)
+        return []
+
+
 def get_file_md5_hex_sync(file_path: str) -> str:
     """同步获取文件的 MD5 值（用于多线程场景）。
+
 
     Args:
         file_path: 文件路径。
@@ -254,7 +293,7 @@ def txt_loader_sync(file_path: str) -> list[Document]:
     """
     abs_file_path = get_abstract_path(file_path) if not os.path.isabs(file_path) else file_path
 
-    encodings = ['utf-8', 'gbk']
+    encodings = ["utf-8", "gbk"]
     for encoding in encodings:
         try:
             loader = TextLoader(abs_file_path, encoding=encoding)
@@ -276,7 +315,7 @@ def word_loader_sync(file_path: str) -> list[Document]:
     """
     abs_file_path = get_abstract_path(file_path) if not os.path.isabs(file_path) else file_path
     try:
-        loader = TextLoader(abs_file_path, encoding='utf-8')
+        loader = TextLoader(abs_file_path, encoding="utf-8")
         return loader.load()
     except Exception as e:
         _logger.error("WORD 文件加载失败: %s, %s", abs_file_path, e)
@@ -316,4 +355,36 @@ def ppt_loader_sync(file_path: str) -> list[Document]:
         return loader.load()
     except Exception as e:
         _logger.error("PPT 文件加载失败: %s, %s", abs_file_path, e)
+        return []
+
+
+def json_loader_sync(file_path: str, content_field: str = "content") -> list[Document]:
+    """同步加载 JSON 文件内容（用于多线程场景）。
+
+    Args:
+        file_path: JSON 文件路径。
+        content_field: JSON 中包含内容的字段名，默认提取 "content" 字段。
+
+    Returns:
+        JSON 文件内容列表。
+    """
+    abs_file_path = get_abstract_path(file_path) if not os.path.isabs(file_path) else file_path
+    try:
+        with open(abs_file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            documents = []
+            
+            if isinstance(data, list):
+                for idx, item in enumerate(data):
+                    if content_field in item:
+                        text = item[content_field]
+                        metadata = {k: v for k, v in item.items() if k != content_field}
+                        metadata['line'] = idx + 1
+                        documents.append(Document(page_content=text, metadata=metadata))
+            elif isinstance(data, dict) and content_field in data:
+                documents.append(Document(page_content=data[content_field], metadata={}))
+            
+            return documents
+    except Exception as e:
+        _logger.error("JSON 文件加载失败: %s, %s", abs_file_path, e)
         return []

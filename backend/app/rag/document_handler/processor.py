@@ -6,15 +6,27 @@ import tempfile
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
-from app.rag.text_spliter import AsyncTextSplitter
 from app.rag.legal_text_splitter import LegalArticleSplitter
+from app.rag.text_spliter import AsyncTextSplitter
 from app.utils.config import chroma_config
 from app.utils.factory import embed_model
-from app.utils.file_handler import pdf_loader, txt_loader, listdir_allowed_type, get_file_md5_hex, markdown_loader, \
-    ppt_loader, word_loader, pdf_loader_sync, txt_loader_sync, markdown_loader_sync, ppt_loader_sync, word_loader_sync
-from app.utils.json_handler import json_loader, json_loader_sync
+from app.utils.file_handler import (
+    get_file_md5_hex,
+    json_loader,
+    json_loader_sync,
+    listdir_allowed_type,
+    markdown_loader,
+    markdown_loader_sync,
+    pdf_loader,
+    pdf_loader_sync,
+    ppt_loader,
+    ppt_loader_sync,
+    txt_loader,
+    txt_loader_sync,
+    word_loader,
+    word_loader_sync,
+)
 from app.utils.logger import get_logger
-
 
 _logger = get_logger("DocProcessor")
 
@@ -25,23 +37,23 @@ class DocumentProcessor:
     def __init__(self, vectors_store: Chroma, md5_store):
         self.vectors_store = vectors_store
         self.md5_store = md5_store
-        
-        splitter_type = chroma_config.get('splitter_type', 'recursive')
-        
-        if splitter_type == 'legal_article':
+
+        splitter_type = chroma_config.get("splitter_type", "recursive")
+
+        if splitter_type == "legal_article":
             self.spliter = LegalArticleSplitter(
-                chunk_size=chroma_config.get('chunk_size', 2000),
-                chunk_overlap=chroma_config.get('chunk_overlap', 200),
-                preserve_structure=chroma_config.get('preserve_legal_structure', True),
-                enable_metadata_extraction=chroma_config.get('enable_metadata_extraction', True)
+                chunk_size=chroma_config.get("chunk_size", 2000),
+                chunk_overlap=chroma_config.get("chunk_overlap", 200),
+                preserve_structure=chroma_config.get("preserve_legal_structure", True),
+                enable_metadata_extraction=chroma_config.get("enable_metadata_extraction", True),
             )
             _logger.info("使用法律专用文本分割器 (LegalArticleSplitter)")
         else:
             self.spliter = AsyncTextSplitter(
-                chunk_size=chroma_config['chunk_size'],
-                chunk_overlap=chroma_config['chunk_overlap'],
-                separators=chroma_config['separators'],
-                embedding_model=embed_model
+                chunk_size=chroma_config["chunk_size"],
+                chunk_overlap=chroma_config["chunk_overlap"],
+                separators=chroma_config["separators"],
+                embedding_model=embed_model,
             )
             _logger.info("使用通用文本分割器 (AsyncTextSplitter)")
 
@@ -54,17 +66,17 @@ class DocumentProcessor:
         Returns:
             文档列表。
         """
-        if read_path.endswith('.txt'):
+        if read_path.endswith(".txt"):
             return await txt_loader(read_path)
-        elif read_path.endswith('.pdf'):
+        elif read_path.endswith(".pdf"):
             return await pdf_loader(read_path)
-        elif read_path.endswith('.md'):
+        elif read_path.endswith(".md"):
             return await markdown_loader(read_path)
-        elif read_path.endswith('.pptx'):
+        elif read_path.endswith(".pptx"):
             return await ppt_loader(read_path)
-        elif read_path.endswith('.docx'):
+        elif read_path.endswith(".docx"):
             return await word_loader(read_path)
-        elif read_path.endswith('.json'):
+        elif read_path.endswith(".json"):
             return await json_loader(read_path)
         else:
             return []
@@ -78,17 +90,17 @@ class DocumentProcessor:
         Returns:
             文档列表。
         """
-        if read_path.endswith('.txt'):
+        if read_path.endswith(".txt"):
             return txt_loader_sync(read_path)
-        elif read_path.endswith('.pdf'):
+        elif read_path.endswith(".pdf"):
             return pdf_loader_sync(read_path)
-        elif read_path.endswith('.md'):
+        elif read_path.endswith(".md"):
             return markdown_loader_sync(read_path)
-        elif read_path.endswith('.pptx'):
+        elif read_path.endswith(".pptx"):
             return ppt_loader_sync(read_path)
-        elif read_path.endswith('.docx'):
+        elif read_path.endswith(".docx"):
             return word_loader_sync(read_path)
-        elif read_path.endswith('.json'):
+        elif read_path.endswith(".json"):
             return json_loader_sync(read_path)
         else:
             return []
@@ -104,7 +116,9 @@ class DocumentProcessor:
         """
         return self.spliter.split_documents_sync(documents)
 
-    async def get_document(self, files: list = None, user_id: str = None, is_public: bool = False, progress_callback=None):
+    async def get_document(
+        self, files: list = None, user_id: str = None, is_public: bool = False, progress_callback=None
+    ):
         """处理文档并将其转为向量存入向量数据库。
 
         Args:
@@ -119,9 +133,7 @@ class DocumentProcessor:
         if files:
             for file in files:
                 temp_file_path = await asyncio.to_thread(
-                    tempfile.NamedTemporaryFile,
-                    delete=False,
-                    suffix=os.path.splitext(file.filename)[1]
+                    tempfile.NamedTemporaryFile, delete=False, suffix=os.path.splitext(file.filename)[1]
                 )
                 content = await file.read()
                 await asyncio.to_thread(temp_file_path.write, content)
@@ -129,8 +141,7 @@ class DocumentProcessor:
                 file_names[temp_file_path.name] = file.filename
         else:
             allowed_file_path: tuple[str] = await listdir_allowed_type(
-                chroma_config['data_path'],
-                tuple(chroma_config['allow_knowledge_file_types'])
+                chroma_config["data_path"], tuple(chroma_config["allow_knowledge_file_types"])
             )
             file_paths = list(allowed_file_path)
 
@@ -140,11 +151,9 @@ class DocumentProcessor:
             md5_hex = await get_file_md5_hex(file_path)
             if await self.md5_store.check_md5_hex(md5_hex, user_id):
                 if progress_callback:
-                    await progress_callback({
-                        'step': 'skipping',
-                        'filename': filename,
-                        'message': f'文件 {filename} 已存在，跳过'
-                    })
+                    await progress_callback(
+                        {"step": "skipping", "filename": filename, "message": f"文件 {filename} 已存在，跳过"}
+                    )
                 _logger.info("文件 MD5 已存在，跳过: path=%s, md5=%s", file_path, md5_hex)
                 if files:
                     try:
@@ -155,22 +164,40 @@ class DocumentProcessor:
 
             try:
                 if progress_callback:
-                    await progress_callback({
-                        'step': 'loading',
-                        'filename': filename,
-                        'message': f'正在加载文档 {filename}...'
-                    })
+                    await progress_callback(
+                        {"step": "loading", "filename": filename, "message": f"正在加载文档 {filename}..."}
+                    )
                 _logger.info("开始加载文档: %s", filename)
 
-                document: list[Document] = await self.get_file_document(file_path)
-                if not document:
+                try:
+                    document: list[Document] = await self.get_file_document(file_path)
+                except Exception as e:
+                    import traceback
+                    _logger.error("get_file_document 出错: %s\n%s", file_path, traceback.format_exc())
                     if progress_callback:
                         await progress_callback({
-                            'step': 'error',
-                            'filename': filename,
-                            'message': f'文件 {filename} 加载内容为空，跳过',
-                            'error_message': '文件内容为空'
+                            "step": "error",
+                            "filename": filename,
+                            "message": f"文件 {filename} 加载出错: {str(e)}",
+                            "error_message": str(e),
                         })
+                    if files:
+                        try:
+                            os.unlink(file_path)
+                        except Exception:
+                            pass
+                    continue
+                    
+                if not document:
+                    if progress_callback:
+                        await progress_callback(
+                            {
+                                "step": "error",
+                                "filename": filename,
+                                "message": f"文件 {filename} 加载内容为空，跳过",
+                                "error_message": "文件内容为空",
+                            }
+                        )
                     _logger.error("文件加载内容为空，跳过: path=%s", file_path)
                     if files:
                         try:
@@ -180,22 +207,23 @@ class DocumentProcessor:
                     continue
 
                 if progress_callback:
-                    await progress_callback({
-                        'step': 'splitting',
-                        'filename': filename,
-                        'message': f'正在切分文档 {filename}...'
-                    })
+                    await progress_callback(
+                        {"step": "splitting", "filename": filename, "message": f"正在切分文档 {filename}..."}
+                    )
                 _logger.info("开始切分文档: %s", filename)
 
-                document: list[Document] = await self.spliter.split_documents(document)
+                # LegalArticleSplitter.split_documents 是同步方法，需要用 asyncio.to_thread 包装
+                document: list[Document] = await asyncio.to_thread(self.spliter.split_documents, document)
                 if not document:
                     if progress_callback:
-                        await progress_callback({
-                            'step': 'error',
-                            'filename': filename,
-                            'message': f'文件 {filename} 切分内容为空，跳过',
-                            'error_message': '文档切分后为空'
-                        })
+                        await progress_callback(
+                            {
+                                "step": "error",
+                                "filename": filename,
+                                "message": f"文件 {filename} 切分内容为空，跳过",
+                                "error_message": "文档切分后为空",
+                            }
+                        )
                     _logger.error("文档切分内容为空，跳过: path=%s", file_path)
                     if files:
                         try:
@@ -205,21 +233,19 @@ class DocumentProcessor:
                     continue
 
                 if progress_callback:
-                    await progress_callback({
-                        'step': 'storing',
-                        'filename': filename,
-                        'message': f'正在存储向量 {filename}...'
-                    })
+                    await progress_callback(
+                        {"step": "storing", "filename": filename, "message": f"正在存储向量 {filename}..."}
+                    )
                 _logger.info("开始存储向量: %s, count=%d", filename, len(document))
 
                 if user_id:
                     for doc in document:
-                        doc.metadata['user_id'] = user_id
+                        doc.metadata["user_id"] = user_id
 
                 for doc in document:
-                    doc.metadata['original_filename'] = filename
-                    doc.metadata['md5'] = md5_hex
-                    doc.metadata['is_public'] = is_public
+                    doc.metadata["original_filename"] = filename
+                    doc.metadata["md5"] = md5_hex
+                    doc.metadata["is_public"] = is_public
 
                 existing_chunk_md5s = await self.md5_store.get_all_chunk_md5(user_id)
                 unique_docs = []
@@ -230,16 +256,18 @@ class DocumentProcessor:
                         unique_docs.append(doc)
                         await self.md5_store.save_chunk_md5(chunk_md5, user_id, md5_hex)
                     else:
-                        _logger.info("Chunk MD5 已存在，跳过: %s...", doc.page_content[:40].replace('\n', ' '))
+                        _logger.debug("Chunk MD5 已存在，跳过: %s...", doc.page_content[:40].replace("\n", " "))
 
                 if not unique_docs:
                     _logger.warning("所有 chunk 均已存在，跳过存储: %s", filename)
                     if progress_callback:
-                        await progress_callback({
-                            'step': 'skipping',
-                            'filename': filename,
-                            'message': f'文件 {filename} 所有内容均已存在，跳过'
-                        })
+                        await progress_callback(
+                            {
+                                "step": "skipping",
+                                "filename": filename,
+                                "message": f"文件 {filename} 所有内容均已存在，跳过",
+                            }
+                        )
                     if files:
                         try:
                             os.unlink(file_path)
@@ -255,11 +283,9 @@ class DocumentProcessor:
                 await self.md5_store.save_md5_hex(md5_hex, filename, original_filename, user_id)
 
                 if progress_callback:
-                    await progress_callback({
-                        'step': 'completed',
-                        'filename': filename,
-                        'message': f'文件 {filename} 处理完成'
-                    })
+                    await progress_callback(
+                        {"step": "completed", "filename": filename, "message": f"文件 {filename} 处理完成"}
+                    )
                 _logger.info("文件 MD5 已保存: path=%s, md5=%s", file_path, md5_hex)
 
                 if files:
@@ -270,12 +296,14 @@ class DocumentProcessor:
 
             except Exception as e:
                 if progress_callback:
-                    await progress_callback({
-                        'step': 'error',
-                        'filename': filename,
-                        'message': f'文件 {filename} 处理失败',
-                        'error_message': str(e)
-                    })
+                    await progress_callback(
+                        {
+                            "step": "error",
+                            "filename": filename,
+                            "message": f"文件 {filename} 处理失败",
+                            "error_message": str(e),
+                        }
+                    )
                 _logger.error("文件处理出错: path=%s, error=%s", file_path, e)
                 if files:
                     try:

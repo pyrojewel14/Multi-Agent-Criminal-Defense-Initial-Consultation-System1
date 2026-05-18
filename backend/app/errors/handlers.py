@@ -5,19 +5,26 @@ from app.errors.codes import ErrorCode
 from app.errors.exceptions import AppException
 from app.utils.logger import get_logger
 
-_logger = get_logger("ErrorHandlers")
+_logger = get_logger("Errors")
 
 
 async def app_exception_handler(
     request: Request, exc: AppException
 ) -> JSONResponse:
-    """Handle all AppException subclasses with a standardized error envelope.
+    """处理所有 AppException 子类的标准化错误响应。
 
-    Maps the exception's code + message to the format:
+    将异常的 code 和 message 映射到格式：
         {"error": {"code": "...", "message": "..."}}
+
+    Args:
+        request: FastAPI 请求对象。
+        exc: AppException 异常实例。
+
+    Returns:
+        JSONResponse 响应对象。
     """
     _logger.warning(
-        "AppException: code=%s status=%d path=%s",
+        "【app_exception_handler】AppException: code=%s status=%d path=%s",
         exc.code.value,
         exc.status_code,
         request.url.path,
@@ -36,15 +43,22 @@ async def app_exception_handler(
 async def validation_exception_handler(
     request: Request, exc: Exception
 ) -> JSONResponse:
-    """Handle Pydantic/FastAPI request validation errors (422).
+    """处理 Pydantic/FastAPI 请求验证错误（422）。
 
-    Registered for RequestValidationError; logs which fields failed.
+    注册用于 RequestValidationError，记录哪些字段验证失败。
+
+    Args:
+        request: FastAPI 请求对象。
+        exc: 验证异常实例。
+
+    Returns:
+        JSONResponse 响应对象。
     """
     from fastapi.exceptions import RequestValidationError
 
     if isinstance(exc, RequestValidationError):
         _logger.warning(
-            "Validation error on %s: %s",
+            "【validation_exception_handler】验证错误 on %s: %s",
             request.url.path,
             exc.errors(),
         )
@@ -62,15 +76,22 @@ async def validation_exception_handler(
 async def fallback_exception_handler(
     request: Request, exc: Exception
 ) -> JSONResponse:
-    """Catch-all handler for unhandled exceptions.
+    """未处理异常的兜底处理器。
 
-    Returns 500 with a generic message; the full traceback is logged
-    but never exposed to the client.
+    返回 500 和通用消息；完整的堆栈跟踪会被记录，
+    但不会暴露给客户端。
+
+    Args:
+        request: FastAPI 请求对象。
+        exc: 异常实例。
+
+    Returns:
+        JSONResponse 响应对象。
     """
     import traceback
 
     _logger.error(
-        "Unhandled exception on %s: %s\n%s",
+        "【fallback_exception_handler】未处理的异常 on %s: %s\n%s",
         request.url.path,
         str(exc),
         traceback.format_exc(),

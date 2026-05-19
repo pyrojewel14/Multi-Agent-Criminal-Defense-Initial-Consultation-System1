@@ -1,14 +1,15 @@
 import asyncio
 import hashlib
+
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langsmith import traceable
 
-from app.rag.vector_store import get_vector_store
 from app.rag.reorder_service import reorder_service
+from app.rag.vector_store import get_vector_store
 from app.utils.factory import chat_model
-from app.utils.prompt_loader import prompt_loader
 from app.utils.logger import get_logger
+from app.utils.prompt_loader import prompt_loader
 
 _logger = get_logger("RagService")
 
@@ -36,7 +37,9 @@ class RagService:
         self.prompt_template = PromptTemplate.from_template(self.prompt_text)
         self.chat_model = chat_model
         self.chain = self._init_chain()
-        self.hyde_prompt_template = PromptTemplate.from_template("基于以下问题，生成一个详细的假设性回答，我会根据你的假设性回答在向量数据库里检索文档：\n\n问题：{query}\n\n假设性回答：")
+        self.hyde_prompt_template = PromptTemplate.from_template(
+            "基于以下问题，生成一个详细的假设性回答，我会根据你的假设性回答在向量数据库里检索文档：\n\n问题：{query}\n\n假设性回答："
+        )
         self.thinking_callback = thinking_callback
 
     async def initialize_retriever(self, query: str = None):
@@ -49,26 +52,20 @@ class RagService:
             weights = self.vector_store.get_dynamic_weights(query)
 
             if self.thinking_callback:
-                await self.thinking_callback({
-                    "type": "thinking",
-                    "stage": "retrieval",
-                    "content": f"初始化检索器（向量权重: {weights[0]:.1f}, BM25权重: {weights[1]:.1f}）",
-                    "details": {
-                        "vector_weight": weights[0],
-                        "bm25_weight": weights[1]
+                await self.thinking_callback(
+                    {
+                        "type": "thinking",
+                        "stage": "retrieval",
+                        "content": f"初始化检索器（向量权重: {weights[0]:.1f}, BM25权重: {weights[1]:.1f}）",
+                        "details": {"vector_weight": weights[0], "bm25_weight": weights[1]},
                     }
-                })
+                )
 
             self.retriever = await self.vector_store.get_retriever(query, self.user_id, self.include_public)
 
-
     def _init_chain(self):
         """初始化链。"""
-        chain = (
-                self.prompt_template
-                | self.chat_model
-                | StrOutputParser()
-        )
+        chain = self.prompt_template | self.chat_model | StrOutputParser()
         return chain
 
     @traceable
@@ -82,11 +79,7 @@ class RagService:
             假设性文档内容。
         """
         try:
-            hyde_chain = (
-                self.hyde_prompt_template
-                | self.chat_model
-                | StrOutputParser()
-            )
+            hyde_chain = self.hyde_prompt_template | self.chat_model | StrOutputParser()
             hypothetical_doc = await hyde_chain.ainvoke({"query": query})
             _logger.info("HyDE 生成假设性文档: %s", hypothetical_doc[:100])
             return hypothetical_doc
@@ -115,32 +108,32 @@ class RagService:
             _logger.info("HyDE 开始处理查询: %s", query[:50])
 
             if self.thinking_callback:
-                await self.thinking_callback({
-                    "type": "thinking",
-                    "stage": "hyde",
-                    "content": f"正在基于查询生成假设性文档..."
-                })
+                await self.thinking_callback(
+                    {"type": "thinking", "stage": "hyde", "content": f"正在基于查询生成假设性文档..."}
+                )
 
             hypothetical_doc = await self.generate_hypothetical_document(query)
 
             if self.thinking_callback:
-                await self.thinking_callback({
-                    "type": "thinking",
-                    "stage": "hyde",
-                    "content": f"假设性文档生成完成",
-                    "details": {
-                        "hypothetical_doc_preview": hypothetical_doc[:200] + "..." if len(hypothetical_doc) > 200 else hypothetical_doc
+                await self.thinking_callback(
+                    {
+                        "type": "thinking",
+                        "stage": "hyde",
+                        "content": f"假设性文档生成完成",
+                        "details": {
+                            "hypothetical_doc_preview": hypothetical_doc[:200] + "..."
+                            if len(hypothetical_doc) > 200
+                            else hypothetical_doc
+                        },
                     }
-                })
+                )
 
             _logger.info("HyDE 使用假设性文档进行检索")
 
             if self.thinking_callback:
-                await self.thinking_callback({
-                    "type": "thinking",
-                    "stage": "retrieval",
-                    "content": "正在向量数据库中检索相关文档..."
-                })
+                await self.thinking_callback(
+                    {"type": "thinking", "stage": "retrieval", "content": "正在向量数据库中检索相关文档..."}
+                )
 
             hyde_retriever = await self.vector_store.get_retriever(hypothetical_doc, self.user_id, self.include_public)
             documents = await hyde_retriever.ainvoke(hypothetical_doc)
@@ -155,19 +148,21 @@ class RagService:
                 doc_previews = []
                 for i, doc in enumerate(documents, 1):
                     preview = doc.page_content[:150] + "..." if len(doc.page_content) > 150 else doc.page_content
-                    doc_previews.append({
-                        "index": i,
-                        "preview": preview,
-                        "source": doc.metadata.get("original_filename", doc.metadata.get("source", "unknown"))
-                    })
-                await self.thinking_callback({
-                    "type": "thinking",
-                    "stage": "retrieval",
-                    "content": f"检索到 {len(documents)} 个相关文档",
-                    "details": {
-                        "documents": doc_previews
+                    doc_previews.append(
+                        {
+                            "index": i,
+                            "preview": preview,
+                            "source": doc.metadata.get("original_filename", doc.metadata.get("source", "unknown")),
+                        }
+                    )
+                await self.thinking_callback(
+                    {
+                        "type": "thinking",
+                        "stage": "retrieval",
+                        "content": f"检索到 {len(documents)} 个相关文档",
+                        "details": {"documents": doc_previews},
                     }
-                })
+                )
 
             return documents
         except Exception as e:
@@ -186,11 +181,9 @@ class RagService:
             重排序后的文档列表。
         """
         if self.thinking_callback:
-            await self.thinking_callback({
-                "type": "thinking",
-                "stage": "reorder",
-                "content": f"正在对 {len(documents)} 个文档进行重排序..."
-            })
+            await self.thinking_callback(
+                {"type": "thinking", "stage": "reorder", "content": f"正在对 {len(documents)} 个文档进行重排序..."}
+            )
 
         result = await reorder_service.reorder_documents(query, documents, thinking_callback=self.thinking_callback)
         if result["success"]:
@@ -200,23 +193,27 @@ class RagService:
             if self.thinking_callback:
                 score_details = []
                 for i, doc in enumerate(result["documents"], 1):
-                    score_details.append({
-                        "rank": i,
-                        "score": round(doc.get("similarity", 0), 4),
-                        "preview": doc.get("document", "")[:100] + "..." if len(doc.get("document", "")) > 100 else doc.get("document", "")
-                    })
-                await self.thinking_callback({
-                    "type": "thinking",
-                    "stage": "reorder",
-                    "content": f"重排序完成，返回 {len(reordered_documents)} 个文档",
-                    "details": {
-                        "scores": score_details
+                    score_details.append(
+                        {
+                            "rank": i,
+                            "score": round(doc.get("similarity", 0), 4),
+                            "preview": doc.get("document", "")[:100] + "..."
+                            if len(doc.get("document", "")) > 100
+                            else doc.get("document", ""),
+                        }
+                    )
+                await self.thinking_callback(
+                    {
+                        "type": "thinking",
+                        "stage": "reorder",
+                        "content": f"重排序完成，返回 {len(reordered_documents)} 个文档",
+                        "details": {"scores": score_details},
                     }
-                })
+                )
 
             return reordered_documents
         else:
-            _logger.warning("重排序失败: %s", result['error'])
+            _logger.warning("重排序失败: %s", result["error"])
             return documents
 
     @traceable
@@ -231,10 +228,7 @@ class RagService:
         """
         if not self.user_id:
             _logger.warning("user_id 为空，不返回任何文档")
-            return {
-                "documents": [],
-                "summary": "抱歉，我没有找到相关的信息。"
-            }
+            return {"documents": [], "summary": "抱歉，我没有找到相关的信息。"}
 
         try:
             documents = await self.retrieve_document(query)
@@ -244,36 +238,33 @@ class RagService:
             reordered_documents = await self.reorder_documents(query, document_contents)
 
             if not reordered_documents:
-                return {
-                    "documents": [],
-                    "summary": "抱歉，我没有找到相关的信息。"
-                }
+                return {"documents": [], "summary": "抱歉，我没有找到相关的信息。"}
 
             try:
                 individual_summaries = []
                 max_documents = 3
 
                 if self.thinking_callback:
-                    await self.thinking_callback({
-                        "type": "thinking",
-                        "stage": "summarize",
-                        "content": f"正在对前 {min(max_documents, len(reordered_documents))} 个最相关文档进行总结..."
-                    })
+                    await self.thinking_callback(
+                        {
+                            "type": "thinking",
+                            "stage": "summarize",
+                            "content": f"正在对前 {min(max_documents, len(reordered_documents))} 个最相关文档进行总结...",
+                        }
+                    )
 
                 async def summarize_document(i, doc):
                     _logger.debug("正在总结第 %d 个文档", i)
                     if self.thinking_callback:
-                        await self.thinking_callback({
-                            "type": "thinking",
-                            "stage": "summarize",
-                            "content": f"正在总结第 {i} 个文档..."
-                        })
+                        await self.thinking_callback(
+                            {"type": "thinking", "stage": "summarize", "content": f"正在总结第 {i} 个文档..."}
+                        )
                     single_context = f"【参考资料{i}】:{doc}\n"
                     import time
+
                     start_time = time.time()
                     single_summary = await asyncio.wait_for(
-                        self.chain.ainvoke({"input": query, "context": single_context}),
-                        timeout=30.0
+                        self.chain.ainvoke({"input": query, "context": single_context}), timeout=30.0
                     )
                     end_time = time.time()
                     _logger.debug("第 %d 个文档总结耗时: %.2f 秒", i, end_time - start_time)
@@ -284,6 +275,7 @@ class RagService:
                     tasks.append(summarize_document(i, doc))
 
                 import time
+
                 start_time = time.time()
                 individual_summaries = await asyncio.gather(*tasks)
                 end_time = time.time()
@@ -291,10 +283,7 @@ class RagService:
 
                 if len(individual_summaries) == 1:
                     _logger.info("生成摘要成功（单文档）")
-                    return {
-                        "documents": reordered_documents,
-                        "summary": individual_summaries[0]
-                    }
+                    return {"documents": reordered_documents, "summary": individual_summaries[0]}
 
                 combined_context = "以下是多个文档的摘要，请综合这些信息生成最终的回答：\n\n"
                 for i, summary in enumerate(individual_summaries, 1):
@@ -303,34 +292,22 @@ class RagService:
                 _logger.debug("合并摘要完成，开始生成最终总结")
 
                 if self.thinking_callback:
-                    await self.thinking_callback({
-                        "type": "thinking",
-                        "stage": "summarize",
-                        "content": "正在综合多个文档生成最终回答..."
-                    })
+                    await self.thinking_callback(
+                        {"type": "thinking", "stage": "summarize", "content": "正在综合多个文档生成最终回答..."}
+                    )
 
                 final_summary = await asyncio.wait_for(
-                    self.chain.ainvoke({"input": query, "context": combined_context}),
-                    timeout=30.0
+                    self.chain.ainvoke({"input": query, "context": combined_context}), timeout=30.0
                 )
 
                 _logger.info("生成摘要成功（多文档合并）")
-                return {
-                    "documents": reordered_documents,
-                    "summary": final_summary
-                }
+                return {"documents": reordered_documents, "summary": final_summary}
             except asyncio.TimeoutError:
                 _logger.error("生成摘要超时")
-                return {
-                    "documents": reordered_documents,
-                    "summary": "抱歉，生成摘要超时，请稍后再试。"
-                }
+                return {"documents": reordered_documents, "summary": "抱歉，生成摘要超时，请稍后再试。"}
         except Exception as e:
             _logger.error("生成摘要失败: %s", e)
-            return {
-                "documents": [],
-                "summary": "抱歉，处理您的请求时出现了错误。"
-            }
+            return {"documents": [], "summary": "抱歉，处理您的请求时出现了错误。"}
 
     @traceable
     async def rag_summary(self, query: str) -> str:
@@ -345,7 +322,8 @@ class RagService:
         result = await self.get_documents_and_summary(query)
         return result.get("summary", "抱歉，处理您的请求时出现了错误。")
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     import asyncio
 
     async def main():

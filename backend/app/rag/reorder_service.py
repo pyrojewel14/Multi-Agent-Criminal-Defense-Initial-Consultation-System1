@@ -1,144 +1,74 @@
-from typing import List, Dict, Any
-import torch
 import os
+from typing import Any, Dict, List
+
 from dotenv import load_dotenv
-from sentence_transformers import CrossEncoder
-from modelscope import snapshot_download
-from tqdm import tqdm
+
+from app.rag.reranker import RerankerConfig, RerankerFactory
 from app.utils.logger import get_logger
 
 load_dotenv()
 
+_logger = get_logger("RAG.Reorder")
 
-_logger = get_logger("Reorder")
 
-
-def find_model_path(base_path: str) -> str:
-    """在指定目录下递归查找包含 config.json 的模型文件夹。
+def check_and_download_model(config: RerankerConfig) -> str:
+    """检查并下载重排序模型。
 
     Args:
-        base_path: 搜索的起始路径。
+        config: 重排序模型配置。
 
     Returns:
-        包含 config.json 的目录路径。
+        模型本地路径。
+
+    Raises:
+        RuntimeError: 模型下载失败时抛出。
     """
-    if os.path.exists(os.path.join(base_path, 'config.json')):
-        return base_path
+    local_path = config.local_path
 
-    for root, dirs, files in os.walk(base_path):
-        if 'config.json' in files:
-            _logger.info("模型路径: %s", root)
-            return root
+    if os.path.exists(os.path.join(local_path, "config.json")):
+        _logger.info("【check_and_download_model】本地模型已存在: %s", local_path)
+        return local_path
 
-    _logger.info("模型路径: %s", base_path)
-    return base_path
-
-
-def check_and_download_reranker_model() -> None:
-    """检查重排序模型是否存在，如不存在则从魔搭社区下载。"""
-    local_model_path = os.getenv("RERANKER_MODEL_PATH", "./data/models/Qwen3-Reranker-0.6B")
-    modelscope_model_name = "Qwen/Qwen3-Reranker-0.6B"
+    _logger.warning("【check_and_download_model】本地模型未找到: %s", local_path)
+    _logger.info("【check_and_download_model】开始从魔搭社区下载模型: %s", config.model_name)
 
     try:
-        if os.path.exists(local_model_path) and os.path.isdir(local_model_path):
-            _logger.info("检测到本地重排序模型: %s", local_model_path)
-        else:
-            _logger.warning("本地模型未找到: %s", local_model_path)
-            _logger.info("开始从魔搭社区下载模型: %s", modelscope_model_name)
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
 
-            os.makedirs(local_model_path, exist_ok=True)
+        from modelscope import snapshot_download
 
-            with tqdm(total=100, desc='下载模型', leave=True, bar_format='{l_bar}{bar}| {n_fmt}%') as pbar:
-                pbar.update(10)
-                snapshot_download(
-                    model_id=modelscope_model_name,
-                    cache_dir=local_model_path,
-                    revision='master'
-                )
-                pbar.update(90)
+        downloaded_path = snapshot_download(
+            model_id=config.model_name,
+            cache_dir=config.cache_dir,
+        )
 
-            _logger.info("模型下载完成，保存路径: %s", local_model_path)
+        _logger.info("【check_and_download_model】模型下载完成，保存路径: %s", downloaded_path)
+        return downloaded_path
 
     except Exception as e:
-        _logger.error("模型检查失败: %s", str(e))
-        raise RuntimeError(f"重排序模型检查失败: {str(e)}")
+        _logger.error("【check_and_download_model】模型下载失败: %s", str(e))
+        raise RuntimeError(f"模型下载失败: {str(e)}") from e
 
 
 class ReorderService:
-    """文档重排序服务"""
+    """文档重排序服务。
 
-    def __init__(self):
-        self.local_model_path = os.getenv("RERANKER_MODEL_PATH", "./data/models/Qwen3-Reranker-0.6B")
-        self.modelscope_model_name = "Qwen/Qwen3-Reranker-0.6B"
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self._model = None
-        self._model_unavailable = False
+    使用重排序模型对检索结果进行相关性评分和重排序。
+    """
 
-    async def _ensure_model(self) -> bool:
-        """确保模型文件存在，不存在则尝试下载。
+    def __init__(self, reranker_type: str = "causal_lm", config: RerankerConfig = None):
+        """初始化重排序服务。
 
-        Returns:
-            模型是否可用。
+        Args:
+            reranker_type: 重排序器类型。
+            config: 重排序模型配置。
         """
-        if self._model_unavailable:
-            return False
+        self.config = config or RerankerConfig.from_env()
+        self.reranker_type = reranker_type
+        self._reranker = RerankerFactory.create(self.config, reranker_type)
+        _logger.info("【__init__】ReorderService 初始化完成: type=%s, model=%s", reranker_type, self.config.model_name)
 
-        actual_path = find_model_path(self.local_model_path)
-        if os.path.exists(os.path.join(actual_path, 'config.json')):
-            return True
-
-        _logger.info("重排序模型不存在，尝试从 ModelScope 下载: %s", self.modelscope_model_name)
-        try:
-            os.makedirs(self.local_model_path, exist_ok=True)
-            snapshot_download(
-                model_id=self.modelscope_model_name,
-                cache_dir=self.local_model_path,
-                revision='master'
-            )
-            _logger.info("重排序模型下载完成")
-            return True
-        except Exception as e:
-            _logger.warning("重排序模型下载失败，将跳过重排序: %s", e)
-            self._model_unavailable = True
-            return False
-
-    async def _get_model(self):
-        """懒加载模型实例。"""
-        if self._model is not None:
-            return self._model
-
-        if not await self._ensure_model():
-            return None
-
-        actual_model_path = find_model_path(self.local_model_path)
-        _logger.info("加载重排序模型: %s", actual_model_path)
-        try:
-            self._model = CrossEncoder(
-                actual_model_path,
-                max_length=512,
-                device=self.device,
-            )
-            self._model.eval()
-            _logger.info("模型加载成功，使用设备: %s", self.device)
-        except Exception as e:
-            _logger.warning("重排序模型加载失败，将跳过重排序: %s", e)
-            self._model_unavailable = True
-            return None
-
-        return self._model
-
-    @property
-    async def model(self):
-        """获取模型实例（懒加载）。
-
-        Returns:
-            CrossEncoder 模型实例，不可用时返回 None。
-        """
-        return await self._get_model()
-
-    async def reorder_documents(
-        self, query: str, documents: List[str], thinking_callback=None
-    ) -> Dict[str, Any]:
+    async def reorder_documents(self, query: str, documents: List[str], thinking_callback=None) -> Dict[str, Any]:
         """对文档进行重排序。
 
         Args:
@@ -151,74 +81,24 @@ class ReorderService:
             {"success": bool, "documents": List[Dict], "error": str}
         """
         try:
-            if not documents:
-                return {
-                    "success": True,
-                    "documents": [],
-                    "error": ""
-                }
+            _logger.debug("【reorder_documents】开始重排序: query=%s, doc_count=%d", query[:50], len(documents))
+            result = await self._reranker.rerank(query, documents, thinking_callback)
 
-            if thinking_callback:
-                await thinking_callback({
-                    "type": "thinking",
-                    "stage": "reorder",
-                    "content": f"正在计算 {len(documents)} 个文档的相关性分数..."
-                })
+            if result["success"] and result["documents"]:
+                sorted_docs = result["documents"]
+                _logger.info("【reorder_documents】=== 排序结果 ===")
+                for i, doc_info in enumerate(sorted_docs, 1):
+                    score = doc_info.get("similarity", 0)
+                    content_preview = doc_info.get("document", "")[:80]
+                    _logger.info("【reorder_documents】#%d 分数: %.4f | 内容: %s...", i, score, content_preview)
+                _logger.info("【reorder_documents】=== 共 %d 个文档 ===", len(sorted_docs))
 
-            pairs = [(query, doc) for doc in documents]
-
-            model = await self.model
-            if model is None:
-                return {
-                    "success": False,
-                    "documents": [],
-                    "error": "重排序模型不可用，跳过重排序"
-                }
-
-            with torch.no_grad():
-                scores = model.predict(pairs, batch_size=1)
-
-            scored_documents = []
-            for doc, score in zip(documents, scores):
-                scored_documents.append({
-                    "document": doc,
-                    "similarity": float(score)
-                })
-                _logger.debug("文档相似度分数: %.4f", float(score))
-
-            if thinking_callback:
-                score_details = []
-                for i, (doc, score) in enumerate(zip(documents, scores), 1):
-                    score_details.append({
-                        "index": i,
-                        "score": round(float(score), 4),
-                        "preview": doc[:100] + "..." if len(doc) > 100 else doc
-                    })
-                await thinking_callback({
-                    "type": "thinking",
-                    "stage": "reorder",
-                    "content": f"已计算完成 {len(documents)} 个文档的相关性分数，按分数降序排序",
-                    "details": {
-                        "scores": score_details
-                    }
-                })
-
-            sorted_docs = sorted(scored_documents, key=lambda x: x["similarity"], reverse=True)
-            _logger.info("文档重排序成功，返回 %d 个文档", len(sorted_docs))
-
-            return {
-                "success": True,
-                "documents": sorted_docs,
-                "error": ""
-            }
+            _logger.info("【reorder_documents】重排序完成: success=%s, doc_count=%d", result["success"], len(result["documents"]))
+            return result
         except Exception as e:
             error_msg = str(e)
-            _logger.error("重排序失败: %s", error_msg)
-            return {
-                "success": False,
-                "documents": [],
-                "error": error_msg
-            }
+            _logger.error("【reorder_documents】重排序失败: %s", error_msg)
+            return {"success": False, "documents": [], "error": error_msg}
 
     @staticmethod
     async def format_reorder_result(sorted_docs: List[Dict]) -> str:
@@ -230,11 +110,31 @@ class ReorderService:
         Returns:
             格式化后的字符串。
         """
-        formatted_result = "重排序后的文档列表：\n"
+        formatted = "重排序后的文档列表：\n"
         for i, doc in enumerate(sorted_docs, 1):
-            formatted_result += f"{i}. 相似度: {doc.get('similarity', 0):.4f}\n"
-            formatted_result += f"   内容: {doc.get('document', '')}\n\n"
-        return formatted_result
+            formatted += f"{i}. 相似度: {doc.get('similarity', 0):.4f}\n"
+            formatted += f"   内容: {doc.get('document', '')}\n\n"
+        return formatted
 
 
-reorder_service = ReorderService()
+def create_default_reranker() -> ReorderService:
+    """创建默认的重排序服务。
+
+    Returns:
+        ReorderService 实例。
+    """
+    return ReorderService()
+
+
+reorder_service = create_default_reranker()
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    config = RerankerConfig.from_env()
+    check_and_download_model(config)
+
+    service = ReorderService(reranker_type="causal_lm", config=config)
+    result = asyncio.run(service.reorder_documents("你好", ["你好", "你好吗", "你好吗？"]))
+    print(result)

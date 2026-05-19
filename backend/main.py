@@ -8,15 +8,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.db.db_config import close_db, init_db
 from app.db.redis_config import close_redis, init_redis
 from app.errors.register import register_exception_handlers
+from app.rag.reorder_service import check_and_download_reranker_model
 from app.security.rbac import attach_user_to_request
 from app.utils.logger import get_logger
 from app.v1.router.auth_router import auth_router, lawyer_router, user_router
+from app.v1.router.consultation import router as consultation_router
 from app.v1.router.consultation_history import consultation_router
 from app.v1.router.knowledge_router import knowledge_router
+from app.v1.router.lawyer import lawyer_session_router
 
 load_dotenv()
 
 _logger = get_logger("Main")
+
+# check_and_download_reranker_model()
 
 
 @asynccontextmanager
@@ -54,6 +59,7 @@ register_exception_handlers(app)
 app.include_router(auth_router, prefix="/api/v1")
 app.include_router(user_router, prefix="/api/v1")
 app.include_router(lawyer_router, prefix="/api/v1")
+app.include_router(lawyer_session_router, prefix="/api/v1")
 app.include_router(knowledge_router, prefix="/api/v1")
 app.include_router(consultation_router, prefix="/api/v1")
 

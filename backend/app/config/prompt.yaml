@@ -1,3 +1,7 @@
 receptionist_prompt: app/prompts/receptionist.txt
 lawref_prompt: app/prompts/lawref.txt
 rag_summary_prompt: app/prompts/rag_summary.txt
+service_planner_prompt: app/prompts/service_planner.txt
+risk_assessor_prompt: app/prompts/risk_assessor.txt
+fact_digger_prompt: app/prompts/fact_digger.txt
+fact_digger_summary_prompt: app/prompts/fact_digger_summary.txt

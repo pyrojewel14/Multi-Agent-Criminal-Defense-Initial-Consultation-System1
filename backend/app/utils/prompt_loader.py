@@ -3,24 +3,27 @@ from pathlib import Path
 
 from app.utils.logger import get_logger
 
+_logger = get_logger("Utils.PromptLoader")
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 PROMPT_CONFIG_PATH = PROJECT_ROOT / "app" / "config" / "prompt.yaml"
 
 
 class PromptLoader:
-    """Loads per-agent System Prompts from text files mapped by YAML config.
+    """从文本文件加载各 Agent 的 System Prompts。
 
-    Prompts are kept in separate .txt files (per encoding rules) and indexed
-    by a YAML registry under config/prompt.yaml.
+    Prompts 保存在独立的 .txt 文件中（符合编码规范），
+    由 config/prompt.yaml 中的 YAML 注册表索引。
     """
 
     def __init__(self):
-        self._logger = get_logger("PromptLoader")
+        """初始化提示词加载器。"""
+        self._logger = get_logger("Utils.PromptLoader")
         self._prompt_map: dict[str, str] = {}
 
         if not PROMPT_CONFIG_PATH.exists():
             self._logger.error(
-                "Prompt config not found: %s", PROMPT_CONFIG_PATH
+                "【__init__】Prompt 配置文件不存在: %s", PROMPT_CONFIG_PATH
             )
             return
 
@@ -29,30 +32,30 @@ class PromptLoader:
                 self._prompt_map = yaml.safe_load(f) or {}
         except (OSError, yaml.YAMLError) as e:
             self._logger.error(
-                "Failed to load prompt config %s: %s", PROMPT_CONFIG_PATH, e
+                "【__init__】加载 prompt 配置失败 %s: %s", PROMPT_CONFIG_PATH, e
             )
             self._prompt_map = {}
 
         self._logger.debug(
-            "Loaded prompt map: %d entries", len(self._prompt_map)
+            "【__init__】已加载 prompt 映射: %d 条", len(self._prompt_map)
         )
 
     def load(self, name: str) -> str:
-        """Load and return the prompt text for a registered prompt name.
+        """加载并返回指定名称的提示词文本。
 
         Args:
-            name: Key in the prompt.yaml registry (e.g. 'receptionist_prompt').
+            name: prompt.yaml 注册表中的键（如 'receptionist_prompt'）。
 
         Returns:
-            The full text content of the corresponding .txt file.
+            对应 .txt 文件的完整文本内容。
 
         Raises:
-            KeyError: If the name is not registered in prompt.yaml.
-            FileNotFoundError: If the referenced .txt file does not exist.
-            OSError: If the file cannot be read.
+            KeyError: 名称未在 prompt.yaml 中注册。
+            FileNotFoundError: 引用的 .txt 文件不存在。
+            OSError: 文件无法读取。
         """
         if name not in self._prompt_map:
-            self._logger.error("Prompt '%s' not found in config", name)
+            self._logger.error("【load】Prompt '%s' 在配置中未找到", name)
             raise KeyError(
                 f"Prompt '{name}' not registered in {PROMPT_CONFIG_PATH}"
             )
@@ -62,7 +65,7 @@ class PromptLoader:
 
         if not full_path.exists():
             self._logger.error(
-                "Prompt file missing: %s (from key '%s')", full_path, name
+                "【load】Prompt 文件缺失: %s (来自键 '%s')", full_path, name
             )
             raise FileNotFoundError(
                 f"Prompt file not found: {full_path} (key: {name})"
@@ -72,14 +75,18 @@ class PromptLoader:
             with open(full_path, "r", encoding="utf-8") as f:
                 content = f.read().strip()
         except OSError as e:
-            self._logger.error("Failed to read prompt '%s': %s", name, e)
+            self._logger.error("【load】读取 prompt '%s' 失败: %s", name, e)
             raise
 
-        self._logger.debug("Loaded prompt '%s' from %s", name, relative_path)
+        self._logger.debug("【load】已加载 prompt '%s' from %s", name, relative_path)
         return content
 
     def get_map(self) -> dict[str, str]:
-        """Return a copy of the prompt name → relative path mapping."""
+        """返回提示词名称到相对路径映射的副本。
+
+        Returns:
+            提示词映射字典。
+        """
         return dict(self._prompt_map)
 
 

@@ -12,4 +12,4 @@
 - victim_forgiveness: 被害人是否谅解
 - prior_record: 是否有前科劣迹
 
-如果某字段信息不明确，设为 null。
+如果某字段信息不明确或不完整，设为 null。

@@ -1,5 +1,6 @@
-import yaml
 from pathlib import Path
+
+import yaml
 
 from app.utils.logger import get_logger
 
@@ -22,23 +23,17 @@ class PromptLoader:
         self._prompt_map: dict[str, str] = {}
 
         if not PROMPT_CONFIG_PATH.exists():
-            self._logger.error(
-                "【__init__】Prompt 配置文件不存在: %s", PROMPT_CONFIG_PATH
-            )
+            self._logger.error("【__init__】Prompt 配置文件不存在: %s", PROMPT_CONFIG_PATH)
             return
 
         try:
             with open(PROMPT_CONFIG_PATH, "r", encoding="utf-8") as f:
                 self._prompt_map = yaml.safe_load(f) or {}
         except (OSError, yaml.YAMLError) as e:
-            self._logger.error(
-                "【__init__】加载 prompt 配置失败 %s: %s", PROMPT_CONFIG_PATH, e
-            )
+            self._logger.error("【__init__】加载 prompt 配置失败 %s: %s", PROMPT_CONFIG_PATH, e)
             self._prompt_map = {}
 
-        self._logger.debug(
-            "【__init__】已加载 prompt 映射: %d 条", len(self._prompt_map)
-        )
+        self._logger.debug("【__init__】已加载 prompt 映射: %d 条", len(self._prompt_map))
 
     def load(self, name: str) -> str:
         """加载并返回指定名称的提示词文本。
@@ -56,20 +51,14 @@ class PromptLoader:
         """
         if name not in self._prompt_map:
             self._logger.error("【load】Prompt '%s' 在配置中未找到", name)
-            raise KeyError(
-                f"Prompt '{name}' not registered in {PROMPT_CONFIG_PATH}"
-            )
+            raise KeyError(f"Prompt '{name}' not registered in {PROMPT_CONFIG_PATH}")
 
         relative_path = self._prompt_map[name]
         full_path = PROJECT_ROOT / relative_path
 
         if not full_path.exists():
-            self._logger.error(
-                "【load】Prompt 文件缺失: %s (来自键 '%s')", full_path, name
-            )
-            raise FileNotFoundError(
-                f"Prompt file not found: {full_path} (key: {name})"
-            )
+            self._logger.error("【load】Prompt 文件缺失: %s (来自键 '%s')", full_path, name)
+            raise FileNotFoundError(f"Prompt file not found: {full_path} (key: {name})")
 
         try:
             with open(full_path, "r", encoding="utf-8") as f:

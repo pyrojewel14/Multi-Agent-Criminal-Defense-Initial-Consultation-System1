@@ -1,4 +1,5 @@
 import os
+
 import yaml
 from dotenv import load_dotenv
 
@@ -11,10 +12,7 @@ class ConfigLoader:
     _logger = get_logger("Utils.ConfigLoader")
 
     @staticmethod
-    def load_yaml(
-            config_path: str,
-            encoding: str = 'utf-8'
-    ) -> dict:
+    def load_yaml(config_path: str, encoding: str = "utf-8") -> dict:
         """从 YAML 文件加载配置。
 
         Args:
@@ -41,7 +39,7 @@ class ConfigLoader:
             raise IsADirectoryError(f"路径不是文件: {path}")
 
         try:
-            with open(path, 'r', encoding=encoding) as file:
+            with open(path, "r", encoding=encoding) as file:
                 config = yaml.safe_load(file)
         except yaml.YAMLError as e:
             ConfigLoader._logger.error("YAML 格式错误 %s: %s", path, e)
@@ -73,9 +71,7 @@ class ConfigLoader:
         llm_type = os.getenv("LLM_TYPE", "ALIYUN").upper()
 
         if llm_type not in ("ALIYUN", "OLLAMA"):
-            ConfigLoader._logger.warning(
-                "LLM_TYPE 值不支持: %s，将使用 ALIYUN", llm_type
-            )
+            ConfigLoader._logger.warning("LLM_TYPE 值不支持: %s，将使用 ALIYUN", llm_type)
             return "ALIYUN"
 
         return llm_type
@@ -98,10 +94,7 @@ class ConfigLoader:
         api_key = os.getenv("ALIYUN_ACCESS_KEY_SECRET")
         if llm_type == "ALIYUN" and not api_key:
             ConfigLoader._logger.error("ALIYUN 模式需要 ALIYUN_ACCESS_KEY_SECRET 环境变量")
-            raise ValueError(
-                "环境变量 ALIYUN_ACCESS_KEY_SECRET 未设置，"
-                "无法使用 ALIYUN LLM 后端"
-            )
+            raise ValueError("环境变量 ALIYUN_ACCESS_KEY_SECRET 未设置，无法使用 ALIYUN LLM 后端")
 
         cfg = {
             "type": llm_type,
@@ -120,11 +113,7 @@ class ConfigLoader:
         }
 
         active_model = cfg[llm_type.lower()]["model"]
-        ConfigLoader._logger.info(
-            "LLM 配置已加载: type=%s, model=%s",
-            llm_type,
-            active_model
-        )
+        ConfigLoader._logger.info("LLM 配置已加载: type=%s, model=%s", llm_type, active_model)
 
         return cfg
 

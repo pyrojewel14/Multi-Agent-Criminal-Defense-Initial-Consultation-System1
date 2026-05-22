@@ -1,8 +1,8 @@
-from abc import ABC, abstractmethod
-from typing import Optional, List
 import os
-from dotenv import load_dotenv
+from abc import ABC, abstractmethod
+from typing import List, Optional
 
+from dotenv import load_dotenv
 from langchain_core.embeddings import Embeddings
 from langchain_core.language_models import BaseChatModel
 
@@ -40,7 +40,11 @@ class DashScopeEmbeddingsWrapper(Embeddings):
         if not self.api_key:
             raise ValueError("未设置 API Key，请设置 DASHSCOPE_API_KEY 或 ALIYUN_ACCESS_KEY_SECRET 环境变量")
 
-        base_url = os.getenv("DASHSCOPE_BASE_URL") or os.getenv("ALIYUN_BASE_URL") or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        base_url = (
+            os.getenv("DASHSCOPE_BASE_URL")
+            or os.getenv("ALIYUN_BASE_URL")
+            or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        )
 
         self.client = OpenAI(api_key=self.api_key, base_url=base_url)
 
@@ -57,12 +61,9 @@ class DashScopeEmbeddingsWrapper(Embeddings):
         all_embeddings = []
 
         for i in range(0, len(texts), BATCH_SIZE):
-            batch = texts[i:i + BATCH_SIZE]
+            batch = texts[i : i + BATCH_SIZE]
             try:
-                response = self.client.embeddings.create(
-                    model=self.model_name,
-                    input=batch
-                )
+                response = self.client.embeddings.create(model=self.model_name, input=batch)
                 all_embeddings.extend([item.embedding for item in response.data])
             except Exception as e:
                 _logger.error("【embed_documents】DashScope embedding 批量错误 (batch %d-%d): %s", i, i + len(batch), e)
@@ -80,10 +81,7 @@ class DashScopeEmbeddingsWrapper(Embeddings):
             嵌入向量，为 float 列表。
         """
         try:
-            response = self.client.embeddings.create(
-                model=self.model_name,
-                input=text
-            )
+            response = self.client.embeddings.create(model=self.model_name, input=text)
             return response.data[0].embedding
         except Exception as e:
             _logger.error("【embed_query】DashScope embedding 错误: %s", e)
@@ -113,13 +111,23 @@ class ChatModelFactory(BaseModelFactory):
     """聊天模型工厂。
 
     支持阿里云百炼和 Ollama 两种后端。
-    提供两种创建方式：
-    1. generator() - 创建带 streaming 的模型实例（用于流式响应）
-    2. create_model(temperature) - 创建带指定温度的模型实例（用于精确响应）
+    提供模型缓存，同一配置的模型实例会被复用。
+
+    统一接口：
+    - create_model() - 创建模型实例（支持所有参数）
+    - create_streaming_model() - 快捷方法，创建流式响应模型
+    - create_precise_model() - 快捷方法，创建精确响应模型
+
+    注意：为保持向后兼容，generator() 方法保留但标记为废弃。
     """
 
+    def __init__(self):
+        """初始化聊天模型工厂。"""
+        super().__init__()
+        self._model_cache = {}  # 模型实例缓存
+
     def generator(self, streaming: bool = True, top_p: float = 0.7) -> Optional[BaseChatModel]:
-        """创建聊天模型实例（带 streaming 配置）。
+        """创建聊天模型实例（带 streaming 配置）- 已废弃，请使用 create_streaming_model()。
 
         Args:
             streaming: 是否启用流式输出。
@@ -128,18 +136,61 @@ class ChatModelFactory(BaseModelFactory):
         Returns:
             聊天模型实例。
         """
-        return self._create_model(streaming=streaming, top_p=top_p)
+        import warnings
 
-    def create_model(self, temperature: float = 0.1) -> BaseChatModel:
-        """创建聊天模型实例（带指定温度，用于精确响应）。
+        warnings.warn(
+            "generator() 已废弃，请使用 create_streaming_model() 或 create_model()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.create_streaming_model(top_p=top_p)
+
+    def create_model(
+        self,
+        temperature: Optional[float] = None,
+        streaming: bool = False,
+        top_p: Optional[float] = None,
+    ) -> BaseChatModel:
+        """创建聊天模型实例（统一接口）。
+
+        支持自定义 temperature、streaming 和 top_p 参数。
+        相同配置的模型实例会被缓存复用。
 
         Args:
-            temperature: 采样温度 (0.0-1.0)。
+            temperature: 采样温度 (0.0-1.0)，与 top_p 二选一。
+            streaming: 是否启用流式输出。
+            top_p: Top-P 采样参数，与 temperature 二选一。
 
         Returns:
             配置好的聊天模型实例。
         """
-        return self._create_model(temperature=temperature, streaming=False, top_p=None)
+        return self._create_model(temperature=temperature, streaming=streaming, top_p=top_p)
+
+    def create_streaming_model(self, top_p: float = 0.7) -> BaseChatModel:
+        """创建流式聊天模型实例（快捷方法）。
+
+        相当于 create_model(streaming=True, top_p=top_p)
+
+        Args:
+            top_p: Top-P 采样参数，默认 0.7。
+
+        Returns:
+            流式聊天模型实例。
+        """
+        return self.create_model(streaming=True, top_p=top_p)
+
+    def create_precise_model(self, temperature: float = 0.1) -> BaseChatModel:
+        """创建精确聊天模型实例（快捷方法）。
+
+        相当于 create_model(streaming=False, temperature=temperature)
+
+        Args:
+            temperature: 采样温度，默认 0.1。
+
+        Returns:
+            精确聊天模型实例。
+        """
+        return self.create_model(streaming=False, temperature=temperature)
 
     def _create_model(
         self,
@@ -147,22 +198,38 @@ class ChatModelFactory(BaseModelFactory):
         streaming: bool = False,
         top_p: Optional[float] = None,
     ) -> BaseChatModel:
-        """根据配置创建聊天模型。
+        """根据配置创建聊天模型（带缓存）。
 
         Args:
             temperature: 采样温度。
             streaming: 是否启用流式输出。
-            top_p: 采样参数。
+            top_p: Top-P 采样参数。
 
         Returns:
             聊天模型实例。
         """
+        # 生成缓存键
+        cache_key = f"{streaming}:{temperature}:{top_p}"
+
+        # 检查缓存
+        if cache_key in self._model_cache:
+            _logger.debug("【_create_model】从缓存返回模型: %s", cache_key)
+            return self._model_cache[cache_key]
+
+        # 创建新实例
         config = self._get_llm_config()
         llm_type = config.get("type", "ALIYUN").upper()
 
         if llm_type == "OLLAMA":
-            return self._create_ollama_model(config, temperature, streaming, top_p)
-        return self._create_aliyun_model(config, temperature, streaming, top_p)
+            model = self._create_ollama_model(config, temperature, streaming, top_p)
+        else:
+            model = self._create_aliyun_model(config, temperature, streaming, top_p)
+
+        # 缓存模型实例
+        self._model_cache[cache_key] = model
+        _logger.info("【_create_model】创建并缓存新模型: %s", cache_key)
+
+        return model
 
     def _create_ollama_model(
         self,
@@ -247,6 +314,17 @@ class EmbedModelFactory(BaseModelFactory):
     """
 
     def generator(self) -> Optional[Embeddings]:
+        """生成嵌入模型实例 - 已废弃，请使用 create_embedding_model()。"""
+        import warnings
+
+        warnings.warn(
+            "generator() 已废弃，请使用 create_embedding_model()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.create_embedding_model()
+
+    def create_embedding_model(self) -> Optional[Embeddings]:
         """根据 EMBED_MODEL_TYPE 生成对应的嵌入模型。
 
         Returns:
@@ -293,10 +371,11 @@ class EmbedModelFactory(BaseModelFactory):
         return DashScopeEmbeddingsWrapper(model_name=model_name, api_key=api_key)
 
 
-
 chat_model_factory = ChatModelFactory()
 embed_model_factory = EmbedModelFactory()
 
-chat_model = chat_model_factory.generator()
-embed_model = embed_model_factory.generator()
-reranker_model = None
+# 使用新接口创建模型实例
+# chat_model: 用于流式响应场景（如 WebSocket 实时对话）
+chat_model = chat_model_factory.create_streaming_model()
+# embed_model: 用于向量嵌入（不需要 streaming）
+embed_model = embed_model_factory.create_embedding_model()

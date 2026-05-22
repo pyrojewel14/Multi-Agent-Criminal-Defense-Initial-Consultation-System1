@@ -48,9 +48,7 @@ class SensitiveFilter(logging.Filter):
         return True
 
 
-_LOG_FORMAT = (
-    "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s"
-)
+_LOG_FORMAT = "%(asctime)s | %(levelname)-5s | %(name)s | %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 _file_handler = TimedRotatingFileHandler(
@@ -86,11 +84,7 @@ def get_logger(name: str, level: int | str | None = None) -> logging.Logger:
         配置好的 logging.Logger 实例。
     """
     logger = logging.getLogger(name)
-    resolved = (
-        level
-        or _MODULE_LEVELS.get(name)
-        or getattr(logging, LOG_LEVEL, logging.INFO)
-    )
+    resolved = level or _MODULE_LEVELS.get(name) or getattr(logging, LOG_LEVEL, logging.INFO)
     logger.setLevel(resolved)
     logger.propagate = False
 

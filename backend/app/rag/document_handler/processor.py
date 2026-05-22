@@ -173,21 +173,24 @@ class DocumentProcessor:
                     document: list[Document] = await self.get_file_document(file_path)
                 except Exception as e:
                     import traceback
+
                     _logger.error("get_file_document 出错: %s\n%s", file_path, traceback.format_exc())
                     if progress_callback:
-                        await progress_callback({
-                            "step": "error",
-                            "filename": filename,
-                            "message": f"文件 {filename} 加载出错: {str(e)}",
-                            "error_message": str(e),
-                        })
+                        await progress_callback(
+                            {
+                                "step": "error",
+                                "filename": filename,
+                                "message": f"文件 {filename} 加载出错: {str(e)}",
+                                "error_message": str(e),
+                            }
+                        )
                     if files:
                         try:
                             os.unlink(file_path)
                         except Exception:
                             pass
                     continue
-                    
+
                 if not document:
                     if progress_callback:
                         await progress_callback(

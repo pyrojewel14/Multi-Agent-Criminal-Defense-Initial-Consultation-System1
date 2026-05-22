@@ -93,7 +93,9 @@ class ReorderService:
                     _logger.info("【reorder_documents】#%d 分数: %.4f | 内容: %s...", i, score, content_preview)
                 _logger.info("【reorder_documents】=== 共 %d 个文档 ===", len(sorted_docs))
 
-            _logger.info("【reorder_documents】重排序完成: success=%s, doc_count=%d", result["success"], len(result["documents"]))
+            _logger.info(
+                "【reorder_documents】重排序完成: success=%s, doc_count=%d", result["success"], len(result["documents"])
+            )
             return result
         except Exception as e:
             error_msg = str(e)

@@ -1,7 +1,6 @@
-from dataclasses import dataclass, asdict
-from typing import Optional, Any
 import json
-
+from dataclasses import asdict, dataclass
+from typing import Any, Optional
 
 EVENT_RESPONSE = "response"
 EVENT_ERROR = "error"
@@ -41,7 +40,7 @@ class SliceResult:
         self.chunk_count: int = 0
 
     @classmethod
-    def success_result(cls, file_index: int, filename: str, documents: list, md5: str) -> 'SliceResult':
+    def success_result(cls, file_index: int, filename: str, documents: list, md5: str) -> "SliceResult":
         result = cls()
         result.file_index = file_index
         result.filename = filename
@@ -52,7 +51,7 @@ class SliceResult:
         return result
 
     @classmethod
-    def error_result(cls, file_index: int, filename: str, error: str) -> 'SliceResult':
+    def error_result(cls, file_index: int, filename: str, error: str) -> "SliceResult":
         result = cls()
         result.file_index = file_index
         result.filename = filename
@@ -62,11 +61,11 @@ class SliceResult:
 
     def to_dict(self) -> dict:
         return {
-            'file_index': self.file_index,
-            'filename': self.filename,
-            'documents': self.documents,
-            'md5': self.md5,
-            'success': self.success,
-            'error': self.error,
-            'chunk_count': self.chunk_count
+            "file_index": self.file_index,
+            "filename": self.filename,
+            "documents": self.documents,
+            "md5": self.md5,
+            "success": self.success,
+            "error": self.error,
+            "chunk_count": self.chunk_count,
         }

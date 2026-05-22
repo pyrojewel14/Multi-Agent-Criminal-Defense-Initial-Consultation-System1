@@ -41,7 +41,8 @@ class CausalLMReranker(BaseReranker):
             if self._positive_id is None or self._negative_id is None:
                 _logger.error(
                     "【_load_model】分词器缺少必需的 token: positive=%s, negative=%s",
-                    self.config.positive_token, self.config.negative_token
+                    self.config.positive_token,
+                    self.config.negative_token,
                 )
                 raise ValueError(
                     f"Tokenizer does not have '{self.config.positive_token}' or '{self.config.negative_token}' tokens"
@@ -49,7 +50,9 @@ class CausalLMReranker(BaseReranker):
 
             _logger.info(
                 "【_load_model】模型加载成功, device: %s, positive_id: %d, negative_id: %d",
-                self.config.device, self._positive_id, self._negative_id
+                self.config.device,
+                self._positive_id,
+                self._negative_id,
             )
 
         return self._model, self._tokenizer
@@ -95,11 +98,7 @@ class CausalLMReranker(BaseReranker):
 
         formatted_pairs = []
         for doc in documents:
-            output = self.config.input_template.format(
-                instruction=instruction,
-                query=query,
-                document=doc
-            )
+            output = self.config.input_template.format(instruction=instruction, query=query, document=doc)
             inputs = tokenizer(
                 output,
                 padding=False,

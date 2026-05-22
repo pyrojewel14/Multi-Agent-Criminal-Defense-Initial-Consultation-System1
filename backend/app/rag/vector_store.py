@@ -6,14 +6,13 @@ from langchain_core.documents import Document
 
 from app.utils.config import chroma_config
 from app.utils.factory import embed_model
-from app.utils.path_tool import get_abstract_path
 from app.utils.logger import get_logger
+from app.utils.path_tool import get_abstract_path
 
+from .document_handler import DocumentProcessor
+from .md5_manager import MD5Store
 from .retrievers import EmptyRetriever
 from .retrievers.hybrid_retriever import HybridRetriever
-from .md5_manager import MD5Store
-from .document_handler import DocumentProcessor
-
 
 _logger = get_logger("VectorStore")
 
@@ -35,14 +34,14 @@ class VectorStoreService:
         import chromadb.api.shared_system_client as _ssc
         from chromadb.config import Settings
 
-        persist_dir = get_abstract_path(chroma_config['persist_directory'])
+        persist_dir = get_abstract_path(chroma_config["persist_directory"])
         os.makedirs(persist_dir, exist_ok=True)
 
         _chroma_client = self._create_chroma_client(persist_dir)
 
         self.vectors_store = Chroma(
             client=_chroma_client,
-            collection_name=chroma_config['collection_name'],
+            collection_name=chroma_config["collection_name"],
             embedding_function=embed_model,
         )
 
@@ -127,7 +126,9 @@ class VectorStoreService:
         """
         return await self.md5_store.check_md5_hex(md5_for_check, user_id)
 
-    async def save_md5_hex(self, md5_hex: str, filename: str = None, original_filename: str = None, user_id: str = None):
+    async def save_md5_hex(
+        self, md5_hex: str, filename: str = None, original_filename: str = None, user_id: str = None
+    ):
         """保存 MD5 值。
 
         Args:
@@ -155,10 +156,7 @@ class VectorStoreService:
         仅供超管使用，用于清空整个知识库。
         """
         try:
-            await asyncio.to_thread(
-                self.vectors_store.delete,
-                where={}
-            )
+            await asyncio.to_thread(self.vectors_store.delete, where={})
             await self.md5_store.clear_all()
             _logger.info("已清空所有知识库文档和 MD5 记录")
         except Exception as e:
@@ -186,10 +184,7 @@ class VectorStoreService:
         """
         try:
             if delete_documents:
-                await asyncio.to_thread(
-                    self.vectors_store.delete,
-                    where={"user_id": user_id}
-                )
+                await asyncio.to_thread(self.vectors_store.delete, where={"user_id": user_id})
                 _logger.info("已删除用户的所有文档: user_id=%s", user_id)
 
             await self.md5_store.delete_user_md5(user_id)
@@ -217,10 +212,7 @@ class VectorStoreService:
 
             if delete_documents:
                 where_clause = {"$and": [{"user_id": user_id}, {"md5": md5_to_delete}]}
-                await asyncio.to_thread(
-                    self.vectors_store.delete,
-                    where=where_clause
-                )
+                await asyncio.to_thread(self.vectors_store.delete, where=where_clause)
                 _logger.info("已删除文件对应文档: user_id=%s, filename=%s", user_id, filename)
 
             return True
@@ -250,10 +242,7 @@ class VectorStoreService:
 
             if delete_documents:
                 where_clause = {"$and": [{"user_id": user_id}, {"md5": md5_to_delete}]}
-                await asyncio.to_thread(
-                    self.vectors_store.delete,
-                    where=where_clause
-                )
+                await asyncio.to_thread(self.vectors_store.delete, where=where_clause)
                 _logger.info("已删除 MD5 对应文档: user_id=%s, md5=%s", user_id, md5_to_delete)
 
             return True
@@ -307,38 +296,38 @@ class VectorStoreService:
         try:
             where_clause = {"user_id": user_id} if user_id else None
             all_docs = await asyncio.to_thread(
-                self.vectors_store.get,
-                include=['documents', 'metadatas'],
-                where=where_clause
+                self.vectors_store.get, include=["documents", "metadatas"], where=where_clause
             )
 
             docs_info = {}
 
-            for i, doc_id in enumerate(all_docs['ids']):
-                metadata = all_docs['metadatas'][i] if i < len(all_docs['metadatas']) else {}
-                content = all_docs['documents'][i] if i < len(all_docs['documents']) else ""
+            for i, doc_id in enumerate(all_docs["ids"]):
+                metadata = all_docs["metadatas"][i] if i < len(all_docs["metadatas"]) else {}
+                content = all_docs["documents"][i] if i < len(all_docs["documents"]) else ""
 
-                filename = metadata.get('source', metadata.get('filename', 'unknown'))
-                if isinstance(filename, str) and '\\' in filename:
+                filename = metadata.get("source", metadata.get("filename", "unknown"))
+                if isinstance(filename, str) and "\\" in filename:
                     filename = os.path.basename(filename)
 
-                original_filename = metadata.get('original_filename', filename)
+                original_filename = metadata.get("original_filename", filename)
                 if filename not in docs_info:
                     docs_info[filename] = {
-                        'id': doc_id,
-                        'filename': filename,
-                        'original_filename': original_filename,
-                        'user_id': metadata.get('user_id'),
-                        'chunk_count': 0,
-                        'preview': "",
-                        'created_at': metadata.get('created_at')
+                        "id": doc_id,
+                        "filename": filename,
+                        "original_filename": original_filename,
+                        "user_id": metadata.get("user_id"),
+                        "chunk_count": 0,
+                        "preview": "",
+                        "created_at": metadata.get("created_at"),
                     }
 
-                docs_info[filename]['chunk_count'] += 1
+                docs_info[filename]["chunk_count"] += 1
 
-                if not docs_info[filename]['preview'] and content:
+                if not docs_info[filename]["preview"] and content:
                     preview_length = 100
-                    docs_info[filename]['preview'] = content[:preview_length] + ("..." if len(content) > preview_length else "")
+                    docs_info[filename]["preview"] = content[:preview_length] + (
+                        "..." if len(content) > preview_length else ""
+                    )
 
             result = list(docs_info.values())
             _logger.info("获取用户知识库文档: user_id=%s, count=%d", user_id, len(result))
@@ -361,20 +350,18 @@ class VectorStoreService:
         try:
             where_clause = {"user_id": user_id}
             all_docs = await asyncio.to_thread(
-                self.vectors_store.get,
-                include=['documents', 'metadatas'],
-                where=where_clause
+                self.vectors_store.get, include=["documents", "metadatas"], where=where_clause
             )
 
             doc_info = None
             full_content = []
             chunk_count = 0
 
-            for i, doc_id in enumerate(all_docs['ids']):
-                metadata = all_docs['metadatas'][i] if i < len(all_docs['metadatas']) else {}
-                content = all_docs['documents'][i] if i < len(all_docs['documents']) else ""
+            for i, doc_id in enumerate(all_docs["ids"]):
+                metadata = all_docs["metadatas"][i] if i < len(all_docs["metadatas"]) else {}
+                content = all_docs["documents"][i] if i < len(all_docs["documents"]) else ""
 
-                source = metadata.get('source', metadata.get('filename', ''))
+                source = metadata.get("source", metadata.get("filename", ""))
                 if isinstance(source, str):
                     source_name = os.path.basename(source)
                 else:
@@ -383,19 +370,19 @@ class VectorStoreService:
                 if source_name == filename:
                     if not doc_info:
                         doc_info = {
-                            'id': doc_id,
-                            'filename': filename,
-                            'user_id': metadata.get('user_id'),
-                            'chunk_count': 0,
-                            'content': "",
-                            'created_at': metadata.get('created_at')
+                            "id": doc_id,
+                            "filename": filename,
+                            "user_id": metadata.get("user_id"),
+                            "chunk_count": 0,
+                            "content": "",
+                            "created_at": metadata.get("created_at"),
                         }
                     chunk_count += 1
                     full_content.append(content)
 
             if doc_info:
-                doc_info['chunk_count'] = chunk_count
-                doc_info['content'] = '\n'.join(full_content)
+                doc_info["chunk_count"] = chunk_count
+                doc_info["content"] = "\n".join(full_content)
 
             _logger.info("获取文档详情: filename=%s, chunk_count=%d", filename, chunk_count)
             return doc_info
@@ -417,38 +404,27 @@ class VectorStoreService:
         try:
             where_clause = {"user_id": user_id}
             all_docs = await asyncio.to_thread(
-                self.vectors_store.get,
-                include=['documents', 'metadatas'],
-                where=where_clause
+                self.vectors_store.get, include=["documents", "metadatas"], where=where_clause
             )
 
             chunks = []
             chunk_index = 0
 
-            for i, doc_id in enumerate(all_docs['ids']):
-                metadata = all_docs['metadatas'][i] if i < len(all_docs['metadatas']) else {}
-                content = all_docs['documents'][i] if i < len(all_docs['documents']) else ""
+            for i, doc_id in enumerate(all_docs["ids"]):
+                metadata = all_docs["metadatas"][i] if i < len(all_docs["metadatas"]) else {}
+                content = all_docs["documents"][i] if i < len(all_docs["documents"]) else ""
 
-                source = metadata.get('source', metadata.get('filename', ''))
+                source = metadata.get("source", metadata.get("filename", ""))
                 if isinstance(source, str):
                     source_name = os.path.basename(source)
                 else:
                     source_name = str(source)
 
                 if source_name == filename:
-                    chunks.append({
-                        'chunk_id': doc_id,
-                        'index': chunk_index,
-                        'content': content,
-                        'metadata': metadata
-                    })
+                    chunks.append({"chunk_id": doc_id, "index": chunk_index, "content": content, "metadata": metadata})
                     chunk_index += 1
 
-            result = {
-                'filename': filename,
-                'total_chunks': len(chunks),
-                'chunks': chunks
-            }
+            result = {"filename": filename, "total_chunks": len(chunks), "chunks": chunks}
 
             _logger.info("获取文档切片: filename=%s, total_chunks=%d", filename, len(chunks))
             return result
@@ -490,7 +466,9 @@ class VectorStoreService:
         """
         return self.document_processor.split_documents_sync(documents)
 
-    async def get_document(self, files: list = None, user_id: str = None, is_public: bool = False, progress_callback=None):
+    async def get_document(
+        self, files: list = None, user_id: str = None, is_public: bool = False, progress_callback=None
+    ):
         """获取文档。
 
         Args:
@@ -502,13 +480,14 @@ class VectorStoreService:
         await self.document_processor.get_document(files, user_id, is_public, progress_callback)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
+
     async def main():
         store = get_vector_store()
         await store.get_document()
 
         retriever = await store.get_retriever()
-        results = await retriever.ainvoke('扫地')
+        results = await retriever.ainvoke("扫地")
         print(f"检索结果数量: {len(results)}")
         for result in results:
             print(result)

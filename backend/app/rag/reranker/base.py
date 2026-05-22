@@ -111,11 +111,13 @@ class BaseReranker(ABC):
             return {"success": True, "documents": [], "error": ""}
 
         if thinking_callback:
-            await thinking_callback({
-                "type": "thinking",
-                "stage": "reorder",
-                "content": f"正在计算 {len(documents)} 个文档的相关性分数...",
-            })
+            await thinking_callback(
+                {
+                    "type": "thinking",
+                    "stage": "reorder",
+                    "content": f"正在计算 {len(documents)} 个文档的相关性分数...",
+                }
+            )
 
         _logger.debug("【rerank】开始格式化 %d 个文档", len(documents))
         pairs = await self._format_pairs(query, documents)
@@ -123,10 +125,7 @@ class BaseReranker(ABC):
         _logger.debug("【rerank】开始计算 %d 个文档的分数", len(pairs))
         scores = await self._compute_scores(pairs)
 
-        scored_documents = [
-            {"document": doc, "similarity": float(score)}
-            for doc, score in zip(documents, scores)
-        ]
+        scored_documents = [{"document": doc, "similarity": float(score)} for doc, score in zip(documents, scores)]
 
         for i, (doc, score) in enumerate(zip(documents, scores), 1):
             preview = doc[:50] + "..." if len(doc) > 50 else doc
@@ -141,12 +140,14 @@ class BaseReranker(ABC):
                 }
                 for i, (doc, score) in enumerate(zip(documents, scores), 1)
             ]
-            await thinking_callback({
-                "type": "thinking",
-                "stage": "reorder",
-                "content": f"已计算完成 {len(documents)} 个文档的相关性分数，按分数降序排序",
-                "details": {"scores": score_details},
-            })
+            await thinking_callback(
+                {
+                    "type": "thinking",
+                    "stage": "reorder",
+                    "content": f"已计算完成 {len(documents)} 个文档的相关性分数，按分数降序排序",
+                    "details": {"scores": score_details},
+                }
+            )
 
         sorted_docs = sorted(scored_documents, key=lambda x: x["similarity"], reverse=True)
         _logger.info("【rerank】重排序完成，返回 %d 个文档", len(sorted_docs))

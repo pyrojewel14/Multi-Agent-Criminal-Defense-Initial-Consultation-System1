@@ -5,3 +5,5 @@ service_planner_prompt: app/prompts/service_planner.txt
 risk_assessor_prompt: app/prompts/risk_assessor.txt
 fact_digger_prompt: app/prompts/fact_digger.txt
 fact_digger_summary_prompt: app/prompts/fact_digger_summary.txt
+extract_case_facts_prompt: app/prompts/extract_case_facts.txt
+fact_digger_first_prompt: app/prompts/fact_digger_first.txt

@@ -24,9 +24,9 @@ CHINESE_SURNAMES: set[str] = {
     "濮阳", "淳于", "单于", "太叔", "申屠", "公孙", "仲孙", "轩辕", "令狐",
 }
 
-_ID_PATTERN_15 = re.compile(r"\b[1-9]\d{5}\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}\b")
-_ID_PATTERN_18 = re.compile(r"\b[1-9]\d{5}(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]\b")
-_PHONE_PATTERN = re.compile(r"\b1[3-9]\d{9}\b")
+_ID_PATTERN_15 = re.compile(r"(?<!\d)[1-9]\d{5}\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}(?!\d)")
+_ID_PATTERN_18 = re.compile(r"(?<!\d)[1-9]\d{5}(19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx](?!\d)")
+_PHONE_PATTERN = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 
 _ADDRESS_KEYWORDS = ["省", "市", "区", "县", "路", "街", "道", "巷", "弄", "号", "栋", "楼", "室", "村", "镇", "乡"]
 _ADDRESS_PATTERN = re.compile(r"[^\s]{2,6}(省|市|区|县)[^\s]{0,20}?(路|街|道|巷|弄|号|栋|楼|室)")
@@ -38,9 +38,7 @@ _VEHICLE_PROVINCE_CODES = [
     "新", "港", "澳", "台"
 ]
 _VEHICLE_PATTERN = re.compile(
-    r"\b["
-    + "".join(_VEHICLE_PROVINCE_CODES)
-    + r"][A-Z][A-HJ-NP-Z0-9]{5}\b"
+    r"(?<![A-Za-z0-9])[" + "".join(_VEHICLE_PROVINCE_CODES) + r"][A-Z][A-Z0-9]{5}(?![A-Za-z0-9])"
 )
 
 _MINOR_PATTERNS = [
@@ -139,18 +137,12 @@ def detect_high_risk(text: str) -> Tuple[bool, str]:
 
     for pattern, risk_type in _HIGH_RISK_PATTERNS:
         if pattern.search(text):
-            _logger.warning(
-                "【detect_high_risk】检测到高风险语句 | 风险类型: %s | 文本长度: %d",
-                risk_type, len(text)
-            )
+            _logger.warning("【detect_high_risk】检测到高风险语句 | 风险类型: %s | 文本长度: %d", risk_type, len(text))
             return True, risk_type
 
     for minor_pattern in _MINOR_PATTERNS:
         if minor_pattern.search(text):
-            _logger.warning(
-                "【detect_high_risk】检测到未成年人相关信息 | 文本长度: %d",
-                len(text)
-            )
+            _logger.warning("【detect_high_risk】检测到未成年人相关信息 | 文本长度: %d", len(text))
             return True, "MINOR_INVOLVED"
 
     return False, ""
@@ -173,9 +165,6 @@ def sanitize_input(text: str) -> str:
 
     sanitized = mask_pii(text)
 
-    _logger.info(
-        "【sanitize_input】输入已清理 | 原始长度: %d | 清理后长度: %d",
-        len(text), len(sanitized)
-    )
+    _logger.info("【sanitize_input】输入已清理 | 原始长度: %d | 清理后长度: %d", len(text), len(sanitized))
 
     return sanitized

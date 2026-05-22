@@ -26,6 +26,7 @@ from app.security.rbac import (
     CLIENT_ROLES,
     ADMIN_LAWYER_ROLES,
 )
+from app.security.sensitive_filter import mask_pii, detect_high_risk, sanitize_input
 
 __all__ = [
     "JWTConfig",
@@ -52,4 +53,7 @@ __all__ = [
     "LAWYER_ROLES",
     "CLIENT_ROLES",
     "ADMIN_LAWYER_ROLES",
+    "mask_pii",
+    "detect_high_risk",
+    "sanitize_input",
 ]

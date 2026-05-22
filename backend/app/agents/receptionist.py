@@ -1,12 +1,10 @@
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from app.security.disclaimer import disclaimer
+from app.state.consultation_state import ConsultationState
 from app.utils.llm_gateway import llm_gateway
 from app.utils.logger import get_logger
 from app.utils.prompt_loader import prompt_loader
-
-if TYPE_CHECKING:
-    from app.state.consultation_state import ConsultationState
 
 _logger = get_logger("Agent.Receptionist")
 
@@ -19,42 +17,42 @@ USER_TYPE_PATTERNS = {
 
 
 def extract_user_type(user_message: str) -> Optional[str]:
-    """从用户消息中提取身份类型
+    """从用户消息中提取身份类型。
 
     Args:
-        user_message: 用户输入的消息
+        user_message: 用户输入的消息。
 
     Returns:
-        身份类型字符串(suspect/victim/family)或None
+        身份类型字符串（suspect/victim/family）或 None。
     """
     for user_type, keywords in USER_TYPE_PATTERNS.items():
         for keyword in keywords:
             if keyword in user_message:
-                _logger.debug(f"识别到用户身份类型: {user_type}, 关键词: {keyword}")
+                _logger.debug("【extract_user_type】识别到用户身份类型: %s, 关键词: %s", user_type, keyword)
                 return user_type
     return None
 
 
 def check_consent_given(user_message: str) -> bool:
-    """检查用户是否已同意权利义务告知书
+    """检查用户是否已同意权利义务告知书。
 
     Args:
-        user_message: 用户输入的消息
+        user_message: 用户输入的消息。
 
     Returns:
-        是否已同意
+        是否已同意。
     """
     return any(keyword in user_message for keyword in CONSENT_KEYWORDS)
 
 
 async def _generate_welcome(state: "ConsultationState") -> str:
-    """生成欢迎语和权利义务告知
+    """生成欢迎语和权利义务告知。
 
     Args:
-        state: 当前咨询状态
+        state: 当前咨询状态。
 
     Returns:
-        欢迎语回复文本
+        欢迎语回复文本。
     """
     prompt = prompt_loader.load("receptionist_prompt")
     user_message = state.get("facts_raw", [""])[-1] if state.get("facts_raw") else ""
@@ -70,18 +68,18 @@ async def _generate_welcome(state: "ConsultationState") -> str:
 
 
 async def _process_consent(state: "ConsultationState", user_message: str) -> "ConsultationState":
-    """处理用户同意流程
+    """处理用户同意流程。
 
     Args:
-        state: 当前咨询状态
-        user_message: 用户消息
+        state: 当前咨询状态。
+        user_message: 用户消息。
 
     Returns:
-        更新后的状态
+        更新后的状态。
     """
     if check_consent_given(user_message):
         state["consent_given"] = True
-        _logger.info(f"用户已同意权利义务告知，session_id: {state.get('session_id', 'unknown')}")
+        _logger.info("【_process_consent】用户已同意权利义务告知, session_id: %s", state.get("session_id", "unknown"))
         state = await _confirm_identity(state)
     else:
         response = await _generate_welcome(state)
@@ -92,13 +90,13 @@ async def _process_consent(state: "ConsultationState", user_message: str) -> "Co
 
 
 async def _confirm_identity(state: "ConsultationState") -> "ConsultationState":
-    """引导用户确认身份类型
+    """引导用户确认身份类型。
 
     Args:
-        state: 当前咨询状态
+        state: 当前咨询状态。
 
     Returns:
-        更新后的状态
+        更新后的状态。
     """
     prompt = prompt_loader.load("receptionist_prompt")
 
@@ -121,20 +119,20 @@ async def _confirm_identity(state: "ConsultationState") -> "ConsultationState":
 
 
 async def _extract_and_confirm_info(state: "ConsultationState", user_message: str) -> "ConsultationState":
-    """提取身份信息并询问案件城市
+    """提取身份信息并询问案件城市。
 
     Args:
-        state: 当前咨询状态
-        user_message: 用户消息
+        state: 当前咨询状态。
+        user_message: 用户消息。
 
     Returns:
-        更新后的状态
+        更新后的状态。
     """
     user_type = extract_user_type(user_message)
 
     if user_type:
         state["user_type"] = user_type
-        _logger.info(f"确认用户身份类型: {user_type}")
+        _logger.info("【_extract_and_confirm_info】确认用户身份类型: %s", user_type)
 
         prompt = prompt_loader.load("receptionist_prompt")
         city_prompt = f"{prompt}\n\n用户已确认身份类型为：{user_type}，\n现在请询问案件发生的城市信息。"
@@ -155,14 +153,14 @@ async def _extract_and_confirm_info(state: "ConsultationState", user_message: st
 
 
 async def _complete_reception(state: "ConsultationState", user_message: str) -> "ConsultationState":
-    """完成接待流程，移交下一Agent
+    """完成接待流程，移交下一 Agent。
 
     Args:
-        state: 当前咨询状态
-        user_message: 用户消息
+        state: 当前咨询状态。
+        user_message: 用户消息。
 
     Returns:
-        更新后的状态
+        更新后的状态。
     """
     city = user_message.strip()
 
@@ -188,31 +186,33 @@ async def _complete_reception(state: "ConsultationState", user_message: str) -> 
     )
 
     state["final_output"] = disclaimer.inject(completion_prompt)
-    _logger.info(f"接待完成，移交至FactDigger，session_id: {state.get('session_id', 'unknown')}")
+    _logger.info(
+        "【_complete_reception】接待完成，移交至FactDigger, session_id: %s", state.get("session_id", "unknown")
+    )
 
     return state
 
 
 async def receptionist_node(state: "ConsultationState") -> "ConsultationState":
-    """接待 Agent 节点函数
+    """Receptionist Agent 节点函数。
 
-    处理首次咨询和身份确认流程
+    处理首次咨询和身份确认流程。
 
     Args:
-        state: 当前 ConsultationState
+        state: 当前 ConsultationState。
 
     Returns:
-        更新后的 ConsultationState
+        更新后的 ConsultationState。
     """
-    _logger.info(f"Receptionist节点被调用，session_id: {state.get('session_id', 'unknown')}")
+    _logger.info("【receptionist_node】Receptionist 节点被调用, session_id: %s", state.get("session_id", "unknown"))
 
     user_message = state.get("facts_raw", [""])[-1] if state.get("facts_raw") else ""
 
     if not state.get("consent_given"):
-        _logger.debug("用户尚未同意，开始接待流程")
+        _logger.info("【receptionist_node】用户尚未同意，开始接待流程")
         state = await _process_consent(state, user_message)
     else:
-        _logger.debug("用户已同意，处理身份信息")
+        _logger.info("【receptionist_node】用户已同意，处理身份信息")
 
         if not state.get("user_type"):
             user_type = extract_user_type(user_message)
@@ -229,8 +229,15 @@ async def receptionist_node(state: "ConsultationState") -> "ConsultationState":
             if not has_city_info and user_message.strip():
                 state = await _complete_reception(state, user_message)
             else:
-                _logger.info("接待流程完成，移交至FactDigger")
+                _logger.info("【receptionist_node】接待流程完成，移交至FactDigger")
                 state["current_agent"] = "FactDigger"
                 state["pending_questions"] = ["请继续收集案件详情"]
 
     return state
+
+
+if __name__ == "__main__":
+    import asyncio
+
+    res = asyncio.run(receptionist_node(ConsultationState({"consent_given": False})))
+    print(res)

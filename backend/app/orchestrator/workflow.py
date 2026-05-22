@@ -2,15 +2,16 @@ from typing import Any, Dict, Literal, Optional
 
 from langgraph.graph import END, StateGraph
 
-from app.agents.fact_digger import fact_digger_node
-from app.agents.human_alert import human_alert_node
-from app.agents.law_ref import law_ref_node
-from app.agents.receptionist import receptionist_node
-from app.agents.risk_assessor import risk_assessor_node
-from app.agents.service_planner import service_planner_node
-from app.errors.exceptions import LLMServiceException, LLMTimeoutException
 from app.state.consultation_state import ConsultationState
 from app.utils.logger import get_logger
+
+from app.agents.receptionist import receptionist_node
+from app.agents.fact_digger import fact_digger_node
+from app.agents.law_ref import law_ref_node
+from app.agents.risk_assessor import risk_assessor_node
+from app.agents.service_planner import service_planner_node
+from app.agents.human_alert import human_alert_node
+from app.errors.exceptions import LLMServiceException, LLMTimeoutException
 
 _logger = get_logger("Orchestrator")
 
@@ -34,7 +35,7 @@ def check_consent(state: ConsultationState) -> Literal["continue", "end"]:
     return "end"
 
 
-def check_facts_sufficient(state: ConsultationState) -> Literal["complete", "loop", "alert"]:
+def check_facts_sufficient(state: ConsultationState) -> Literal["complete", "loop", "alert", "max_loop"]:
     """条件边：根据事实收集覆盖度决定流程走向。
 
     Args:
@@ -44,10 +45,21 @@ def check_facts_sufficient(state: ConsultationState) -> Literal["complete", "loo
         "complete" - 覆盖度 >= 80%，继续到 RiskAssessor
         "loop" - 覆盖度 < 80%，继续追问
         "alert" - 触发人工介入
+        "max_loop" - 达到最大循环次数，强制进入 RiskAssessor
     """
     if state.get("alert_triggered"):
         _logger.info("检测到高风险内容，触发人工介入")
         return "alert"
+
+    # 循环计数保护
+    loop_count = state.get("fact_law_loop_count", 0)
+    max_loops = 10
+    if loop_count >= max_loops:
+        _logger.warning(
+            "【check_facts_sufficient】达到最大循环次数 %d，强制进入风险评估",
+            max_loops,
+        )
+        return "max_loop"
 
     coverage_rate = state.get("facts_coverage_rate", 0.0)
 
@@ -255,7 +267,7 @@ class ConsultationOrchestrator:
         workflow.add_conditional_edges(
             "fact_digger",
             check_facts_sufficient,
-            {"complete": "risk_assessor", "loop": "law_ref", "alert": "human_alert"},
+            {"complete": "risk_assessor", "loop": "law_ref", "alert": "human_alert", "max_loop": "risk_assessor"},
         )
 
         workflow.add_edge("risk_assessor", "service_planner")
@@ -399,14 +411,13 @@ class ConsultationOrchestrator:
         return True
 
     def _update_session_context(self, session_id: str, state: ConsultationState) -> None:
-        """更新会话上下文。
+        """更新会话上下文（内部使用）。
 
         Args:
             session_id: 会话 ID
             state: 当前状态
         """
-        if session_id in self._active_sessions:
-            self._active_sessions[session_id].update(state)
+        self.update_session_context(session_id, state)
 
     def _cleanup_session(self, session_id: str) -> None:
         """清理会话上下文。

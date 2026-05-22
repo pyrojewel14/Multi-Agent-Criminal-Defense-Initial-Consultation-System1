@@ -1,10 +1,10 @@
+import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
-from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 
 from app.security.disclaimer import disclaimer
-from app.utils.factory import chat_model_factory
+from app.security.sensitive_filter import detect_high_risk, mask_pii, sanitize_input
 from app.utils.llm_gateway import llm_gateway
 from app.utils.logger import get_logger
 from app.utils.prompt_loader import prompt_loader
@@ -16,7 +16,8 @@ _logger = get_logger("Agent.FactDigger")
 
 COVERAGE_THRESHOLD = 0.8
 
-EXTRACT_CASE_FACTS_PROMPT = """从咨询者描述中提取刑事案件关键事实要素。
+# 默认提示词（外部文件加载失败时使用）
+DEFAULT_EXTRACT_CASE_FACTS_PROMPT = """从咨询者描述中提取刑事案件关键事实要素。
 
 请提取以下字段：
 - incident_time: 事件发生时间
@@ -72,6 +73,22 @@ DEFAULT_FIRST_PROMPT = """请按以下时间线结构描述事件经过：
    - 事后各方有何反应？
    - 是否有人报警？
    - 公安或其他部门是否介入？"""
+
+
+def _load_extract_case_facts_prompt() -> str:
+    """加载事实提取提示词"""
+    try:
+        return prompt_loader.load("extract_case_facts_prompt")
+    except KeyError:
+        return DEFAULT_EXTRACT_CASE_FACTS_PROMPT
+
+
+def _load_first_prompt() -> str:
+    """加载首次引导提示词"""
+    try:
+        return prompt_loader.load("fact_digger_first_prompt")
+    except KeyError:
+        return DEFAULT_FIRST_PROMPT
 
 
 def _load_follow_up_prompt() -> str:
@@ -137,6 +154,8 @@ def extract_case_facts(
 async def _analyze_coverage(facts_structured: Dict[str, Any], applied_laws: List[Dict[str, Any]]) -> Dict[str, Any]:
     """分析构成要件覆盖度。
 
+    注意：跳过 RAG 检索结果，只使用 JSON 知识库的结果计算覆盖度。
+
     Args:
         facts_structured: 结构化事实数据
         applied_laws: 适用的法律条款列表
@@ -151,13 +170,36 @@ async def _analyze_coverage(facts_structured: Dict[str, Any], applied_laws: List
             "coverage_rate": 0.0,
             "missing_elements": [],
             "weak_elements": [],
+            "source": "no_laws",
+        }
+
+    # 延迟导入避免循环依赖
+    from app.agents.law_ref import _is_rag_result
+
+    # 过滤掉 RAG 结果，只用 JSON 知识库的结果计算覆盖度
+    json_laws = [law for law in applied_laws if not _is_rag_result(law)]
+    rag_laws = [law for law in applied_laws if _is_rag_result(law)]
+
+    if not json_laws and rag_laws:
+        _logger.warning(
+            "【_analyze_coverage】无可用的 JSON 知识库结果，%d 个 RAG 结果被跳过",
+            len(rag_laws),
+        )
+        return {
+            "total_elements": 0,
+            "covered_elements": 0,
+            "coverage_rate": 0.0,
+            "missing_elements": [],
+            "weak_elements": [],
+            "source": "rag_only",
+            "rag_count": len(rag_laws),
         }
 
     covered_elements = []
     missing_elements = []
     weak_elements = []
 
-    for law in applied_laws:
+    for law in json_laws:
         required_elements = law.get("elements", [])
 
         for element in required_elements:
@@ -189,6 +231,9 @@ async def _analyze_coverage(facts_structured: Dict[str, Any], applied_laws: List
         "coverage_rate": coverage_rate,
         "missing_elements": missing_elements,
         "weak_elements": weak_elements,
+        "source": "json_knowledge",
+        "json_law_count": len(json_laws),
+        "rag_count": len(rag_laws),
     }
 
 
@@ -234,9 +279,12 @@ async def _generate_follow_up_questions(missing_elements: List[str], facts_struc
 
     system_prompt = _load_follow_up_prompt()
 
+    # P0-1: 对结构化事实中的 PII 进行脱敏
+    facts_text = mask_pii(json.dumps(facts_structured, ensure_ascii=False))
+
     user_message_parts = [
         "当前已收集的事实：",
-        str(facts_structured),
+        facts_text,
         "",
         "缺失的构成要件：",
         str(missing_elements),
@@ -248,8 +296,6 @@ async def _generate_follow_up_questions(missing_elements: List[str], facts_struc
 
     try:
         response = await llm_gateway.generate(system_prompt=system_prompt, user_message=user_message, temperature=0.1)
-
-        import json
 
         start_idx = response.find("{")
         end_idx = response.rfind("}") + 1
@@ -275,9 +321,12 @@ async def _generate_fact_summary(facts_structured: Dict[str, Any], facts_raw: Li
     """
     system_prompt = _load_summary_prompt()
 
+    # P0-1: 对结构化事实中的 PII 进行脱敏
+    facts_text = mask_pii(json.dumps(facts_structured, ensure_ascii=False))
+
     user_message_parts = [
         "结构化事实：",
-        str(facts_structured),
+        facts_text,
         "",
         "原始用户描述：",
         "\n".join(facts_raw),
@@ -303,36 +352,166 @@ async def _extract_structured_facts(facts_raw: List[str]) -> Dict[str, Any]:
     Returns:
         结构化事实字典
     """
-    model = chat_model_factory.create_model(temperature=0.1)
-    model_with_tools = model.bind_tools([extract_case_facts])
-
     combined_facts = "\n".join([f"- {fact}" for fact in facts_raw])
-
-    messages = [
-        SystemMessage(content=EXTRACT_CASE_FACTS_PROMPT),
-        HumanMessage(content=f"请从以下描述中提取案件事实要素：\n\n{combined_facts}"),
-    ]
+    user_message = f"请从以下描述中提取案件事实要素：\n\n{combined_facts}"
 
     try:
-        response = await model_with_tools.ainvoke(messages)
+        # 使用 LLMGateway 的 generate_with_tools 方法
+        result = await llm_gateway.generate_with_tools(
+            system_prompt=_load_extract_case_facts_prompt(),
+            user_message=user_message,
+            tools=[extract_case_facts],
+            temperature=0.1,
+        )
 
-        if hasattr(response, "tool_calls") and response.tool_calls:
-            for tool_call in response.tool_calls:
+        # 优先使用 tool_calls 返回
+        if result.get("has_tool_call"):
+            for tool_call in result["tool_calls"]:
                 if tool_call.get("name") == "extract_case_facts":
                     return tool_call.get("args", {})
 
-        if hasattr(response, "additional_kwargs"):
-            function_call = response.additional_kwargs.get("function_call")
-            if function_call:
-                import json
+        # 回退：尝试从 content 中解析 JSON
+        content = result.get("content", "")
+        if content:
+            import re
 
-                args_str = function_call.get("arguments", "{}")
-                return json.loads(args_str)
+            json_match = re.search(r"\{[\s\S]*\}", content)
+            if json_match:
+                return json.loads(json_match.group())
 
         return {}
     except Exception as e:
         _logger.error("【_extract_structured_facts】Function Calling 提取失败: %s", e)
         return {}
+
+
+def _handle_first_interaction(state: "ConsultationState") -> "ConsultationState":
+    """处理首次交互（无 facts_raw 且无 user_input 的情况）。
+
+    Args:
+        state: 当前 ConsultationState
+
+    Returns:
+        更新后的 ConsultationState
+    """
+    conversation_history = state.get("conversation_history", [])
+    response_text = disclaimer.inject(_load_first_prompt())
+
+    conversation_history.append({"agent": "FactDigger", "role": "assistant", "content": response_text})
+
+    state["current_agent"] = "FactDigger"
+    state["conversation_history"] = conversation_history
+    state["final_output"] = response_text
+    state["facts_coverage_rate"] = 0.0
+
+    _logger.info("【fact_digger_node】发送首次引导语")
+    return state
+
+
+def _handle_high_risk_input(
+    state: "ConsultationState", user_input: str, conversation_history: List[Dict[str, Any]]
+) -> "ConsultationState":
+    """处理高风险输入。
+
+    Args:
+        state: 当前 ConsultationState
+        user_input: 用户输入内容
+        conversation_history: 对话历史
+
+    Returns:
+        更新后的 ConsultationState
+    """
+    is_high_risk, risk_type = detect_high_risk(user_input)
+    if is_high_risk:
+        _logger.warning("【fact_digger_node】检测到高风险语句，风险类型: %s", risk_type)
+        state["alert_triggered"] = True
+        state["risk_assessment"] = {"risk_type": risk_type, "risk_level": "high"}
+        state["current_agent"] = "HumanAlert"
+        state["conversation_history"] = conversation_history
+        return state
+    return state
+
+
+async def _handle_insufficient_coverage(
+    state: "ConsultationState",
+    coverage_analysis: Dict[str, Any],
+    facts_structured: Dict[str, Any],
+    pending_questions: List[str],
+    conversation_history: List[Dict[str, Any]],
+) -> "ConsultationState":
+    """处理覆盖度不足的情况。
+
+    Args:
+        state: 当前 ConsultationState
+        coverage_analysis: 覆盖度分析结果
+        facts_structured: 结构化事实数据
+        pending_questions: 待追问问题列表
+        conversation_history: 对话历史
+
+    Returns:
+        更新后的 ConsultationState
+    """
+    missing_elements = coverage_analysis.get("missing_elements", [])
+    new_questions = await _generate_follow_up_questions(missing_elements, facts_structured)
+
+    pending_questions.extend(new_questions)
+
+    response_text = "为了更准确地分析案件，请您补充以下信息：\n\n"
+    for i, question in enumerate(new_questions, 1):
+        response_text += f"{i}. {question}\n"
+
+    response_text = disclaimer.inject(response_text)
+
+    conversation_history.append({"agent": "FactDigger", "role": "assistant", "content": response_text})
+
+    state["pending_questions"] = pending_questions
+    state["final_output"] = response_text
+    state["current_agent"] = "FactDigger"
+    state["conversation_history"] = conversation_history
+
+    _logger.info("【fact_digger_node】生成追问 %d 个，覆盖度不足", len(new_questions))
+    return state
+
+
+async def _handle_sufficient_coverage(
+    state: "ConsultationState",
+    facts_structured: Dict[str, Any],
+    facts_raw: List[str],
+    conversation_history: List[Dict[str, Any]],
+) -> "ConsultationState":
+    """处理覆盖度达标的情况。
+
+    Args:
+        state: 当前 ConsultationState
+        facts_structured: 结构化事实数据
+        facts_raw: 原始用户输入列表
+        conversation_history: 对话历史
+
+    Returns:
+        更新后的 ConsultationState
+    """
+    summary = await _generate_fact_summary(facts_structured, facts_raw)
+
+    response_text_parts = [
+        "## 案件事实摘要",
+        "",
+        "请确认以下内容是否准确：",
+        "",
+        summary,
+        "",
+        "如有不准确之处，请修正。",
+    ]
+    response_text = "\n".join(response_text_parts)
+    response_text = disclaimer.inject(response_text)
+
+    conversation_history.append({"agent": "FactDigger", "role": "assistant", "content": response_text})
+
+    state["final_output"] = response_text
+    state["current_agent"] = "RiskAssessor"
+    state["conversation_history"] = conversation_history
+
+    _logger.info("【fact_digger_node】生成事实摘要，覆盖度已达标，跳转 RiskAssessor")
+    return state
 
 
 async def fact_digger_node(state: "ConsultationState") -> "ConsultationState":
@@ -357,21 +536,20 @@ async def fact_digger_node(state: "ConsultationState") -> "ConsultationState":
 
     user_input = state.get("current_input", "")
 
+    # 首次交互：无原始事实且无用户输入
     if not facts_raw and not user_input:
-        response_text = disclaimer.inject(DEFAULT_FIRST_PROMPT)
+        return _handle_first_interaction(state)
 
-        conversation_history.append({"agent": "FactDigger", "role": "assistant", "content": response_text})
-
-        state["current_agent"] = "FactDigger"
-        state["conversation_history"] = conversation_history
-        state["final_output"] = response_text
-        state["facts_coverage_rate"] = 0.0
-
-        _logger.info("【fact_digger_node】发送首次引导语")
-        return state
-
+    # 处理用户输入
     if user_input:
-        facts_raw.append(user_input)
+        # P0-2: 高风险语句检测
+        state = _handle_high_risk_input(state, user_input, conversation_history)
+        if state.get("current_agent") == "HumanAlert":
+            return state
+
+        # P0-1: PII 脱敏后存储
+        sanitized_input = sanitize_input(user_input)
+        facts_raw.append(sanitized_input)
         _logger.debug("【fact_digger_node】追加用户输入到 facts_raw，当前共 %d 条", len(facts_raw))
 
     facts_structured = await _extract_structured_facts(facts_raw)
@@ -381,13 +559,27 @@ async def fact_digger_node(state: "ConsultationState") -> "ConsultationState":
     state["facts_raw"] = facts_raw
 
     if not applied_laws:
-        _logger.info("【fact_digger_node】等待 LawRef 返回法条信息")
+        _logger.warning(
+            "【fact_digger_node】applied_laws 为空，设置 coverage_rate=0，等待 LawRef 返回"
+        )
+        state["facts_coverage_rate"] = 0.0
         state["current_agent"] = "FactDigger"
         state["conversation_history"] = conversation_history
         return state
 
+    # 分析覆盖度
     coverage_analysis = await _analyze_coverage(facts_structured, applied_laws)
     coverage_rate = coverage_analysis.get("coverage_rate", 0.0)
+
+    # 更新循环计数
+    loop_count = state.get("fact_law_loop_count", 0) + 1
+    state["fact_law_loop_count"] = loop_count
+    _logger.debug(
+        "【fact_digger_node】当前循环次数: %d/%d",
+        loop_count,
+        10,  # 与 workflow.py 中的 max_loops 保持一致
+    )
+
     state["facts_coverage_rate"] = coverage_rate
 
     _logger.info(
@@ -398,47 +590,6 @@ async def fact_digger_node(state: "ConsultationState") -> "ConsultationState":
     )
 
     if coverage_rate < COVERAGE_THRESHOLD:
-        missing_elements = coverage_analysis.get("missing_elements", [])
-        new_questions = await _generate_follow_up_questions(missing_elements, facts_structured)
-
-        pending_questions.extend(new_questions)
-
-        response_text = "为了更准确地分析案件，请您补充以下信息：\n\n"
-        for i, question in enumerate(new_questions, 1):
-            response_text += f"{i}. {question}\n"
-
-        response_text = disclaimer.inject(response_text)
-
-        conversation_history.append({"agent": "FactDigger", "role": "assistant", "content": response_text})
-
-        state["pending_questions"] = pending_questions
-        state["final_output"] = response_text
-        state["current_agent"] = "FactDigger"
-
-        _logger.info("【fact_digger_node】生成追问 %d 个，覆盖度不足", len(new_questions))
+        return await _handle_insufficient_coverage(state, coverage_analysis, facts_structured, pending_questions, conversation_history)
     else:
-        summary = await _generate_fact_summary(facts_structured, facts_raw)
-
-        response_text_parts = [
-            "## 案件事实摘要",
-            "",
-            "请确认以下内容是否准确：",
-            "",
-            summary,
-            "",
-            "如有不准确之处，请修正。",
-        ]
-        response_text = "\n".join(response_text_parts)
-        response_text = disclaimer.inject(response_text)
-
-        conversation_history.append({"agent": "FactDigger", "role": "assistant", "content": response_text})
-
-        state["final_output"] = response_text
-        state["current_agent"] = "RiskAssessor"
-
-        _logger.info("【fact_digger_node】生成事实摘要，覆盖度已达标，跳转 RiskAssessor")
-
-    state["conversation_history"] = conversation_history
-
-    _logger.info("【fact_digger_node】FactDigger 节点执行完成")
-    return state
+        return await _handle_sufficient_coverage(state, facts_structured, facts_raw, conversation_history)

@@ -1,6 +1,8 @@
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from app.security.disclaimer import disclaimer
+from app.security.sensitive_filter import mask_pii
 from app.utils.llm_gateway import llm_gateway
 from app.utils.logger import get_logger
 from app.utils.prompt_loader import prompt_loader
@@ -74,7 +76,7 @@ async def risk_assessor_node(state: "ConsultationState") -> "ConsultationState":
     return state
 
 
-async def _generate_risk_assessment(facts_structured: dict, applied_laws: list) -> dict:
+async def _generate_risk_assessment(facts_structured: Dict[str, Any], applied_laws: List[Dict[str, Any]]) -> Dict[str, Any]:
     """生成综合风险评估
 
     Args:
@@ -86,9 +88,12 @@ async def _generate_risk_assessment(facts_structured: dict, applied_laws: list) 
     """
     system_prompt = _load_prompt()
 
+    # P0-1: 对传给 LLM 的案件事实进行 PII 脱敏
+    facts_text = mask_pii(json.dumps(facts_structured, ensure_ascii=False))
+
     user_message_parts = [
         "案件事实：",
-        str(facts_structured),
+        facts_text,
         "",
         "适用法律：",
         str(applied_laws),
@@ -103,8 +108,6 @@ async def _generate_risk_assessment(facts_structured: dict, applied_laws: list) 
 
     _logger.debug("【_generate_risk_assessment】LLM生成风险评估完成")
 
-    import json
-
     try:
         assessment = json.loads(response)
     except json.JSONDecodeError:
@@ -114,7 +117,7 @@ async def _generate_risk_assessment(facts_structured: dict, applied_laws: list) 
     return assessment
 
 
-def _parse_fallback_assessment(raw_response: str) -> dict:
+def _parse_fallback_assessment(raw_response: str) -> Dict[str, Any]:
     """解析非JSON格式的评估响应作为后备方案
 
     Args:
@@ -138,7 +141,7 @@ def _parse_fallback_assessment(raw_response: str) -> dict:
     }
 
 
-def _add_to_conversation_history(state: "ConsultationState", agent: str, assessment: dict) -> None:
+def _add_to_conversation_history(state: "ConsultationState", agent: str, assessment: Dict[str, Any]) -> None:
     """更新对话历史记录
 
     Args:
@@ -162,7 +165,7 @@ def _add_to_conversation_history(state: "ConsultationState", agent: str, assessm
     _logger.debug("【_add_to_conversation_history】已添加对话历史记录")
 
 
-def _extract_key_risks(assessment: dict) -> list:
+def _extract_key_risks(assessment: Dict[str, Any]) -> List[str]:
     """提取关键风险摘要
 
     Args:
@@ -189,7 +192,7 @@ def _extract_key_risks(assessment: dict) -> list:
     return key_risks
 
 
-def format_risk_assessment_report(risk_assessment: dict) -> str:
+def format_risk_assessment_report(risk_assessment: Dict[str, Any]) -> str:
     """格式化风险评估报告
 
     Args:
@@ -261,7 +264,7 @@ def format_risk_assessment_report(risk_assessment: dict) -> str:
     return disclaimer.inject(report_content)
 
 
-def _format_factor_list(factors: list) -> str:
+def _format_factor_list(factors: List[str]) -> str:
     """格式化情节列表
 
     Args:

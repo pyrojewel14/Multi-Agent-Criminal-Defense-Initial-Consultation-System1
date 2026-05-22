@@ -1,4 +1,5 @@
-from typing import TYPE_CHECKING
+import json
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from app.security.disclaimer import disclaimer
 from app.utils.llm_gateway import llm_gateway
@@ -132,7 +133,7 @@ async def service_planner_node(state: "ConsultationState") -> "ConsultationState
 
 
 def _build_service_request_message(
-    facts_structured: dict, applied_laws: list, risk_assessment: dict, conversation_history: list
+    facts_structured: Dict[str, Any], applied_laws: List[Dict[str, Any]], risk_assessment: Dict[str, Any], conversation_history: List[Dict[str, Any]]
 ) -> str:
     """构建服务方案请求消息
 
@@ -149,17 +150,17 @@ def _build_service_request_message(
 
     # 添加案件基本信息
     message_parts.append("【案件基本信息】")
-    message_parts.append(f"结构化事实: {facts_structured}")
+    message_parts.append(f"结构化事实: {json.dumps(facts_structured, ensure_ascii=False)}")
     message_parts.append("")
 
     # 添加适用法律
     message_parts.append("【适用法律法规】")
-    message_parts.append(f"法律法规: {applied_laws}")
+    message_parts.append(f"法律法规: {json.dumps(applied_laws, ensure_ascii=False)}")
     message_parts.append("")
 
     # 添加风险评估
     message_parts.append("【风险评估结果】")
-    message_parts.append(f"风险评估: {risk_assessment}")
+    message_parts.append(f"风险评估: {json.dumps(risk_assessment, ensure_ascii=False)}")
     message_parts.append("")
 
     # 添加对话历史摘要
@@ -205,7 +206,7 @@ def _get_default_service_planner_prompt() -> str:
     return DEFAULT_SERVICE_PLANNER_PROMPT
 
 
-def _parse_llm_response(response_content: str) -> dict:
+def _parse_llm_response(response_content: str) -> Dict[str, Any]:
     """解析 LLM 响应内容
 
     Args:
@@ -243,7 +244,7 @@ def _parse_llm_response(response_content: str) -> dict:
     return result
 
 
-def _extract_service_plan_structure(service_plan_content: str) -> dict:
+def _extract_service_plan_structure(service_plan_content: str) -> Dict[str, Any]:
     """提取服务计划结构化信息
 
     Args:
@@ -310,15 +311,3 @@ def _get_current_timestamp() -> str:
 
     return datetime.now().isoformat()
 
-
-if __name__ == "__main__":
-    test_response = """【服务方案】
-立即行动：
-1. 立即联系律师
-
-# 刑事辩护初期咨询报告
-内容..."""
-
-    result = _parse_llm_response(test_response)
-    print(f"service_plan: {result['service_plan']}")
-    print(f"report_draft: {result['report_draft'][:50]}...")

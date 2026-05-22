@@ -377,7 +377,7 @@ class RiskAlertItem(BaseModel):
     metadata: Optional[dict[str, Any]] = Field(None, description="附加元数据")
 
 
-class WSMessage(BaseModel):
+class WebSocketMessage(BaseModel):
     """WebSocket消息基类模型"""
     type: str = Field(..., description="消息类型")
     session_id: str = Field(..., description="会话ID")
@@ -389,6 +389,59 @@ class WSMessage(BaseModel):
         json_encoders = {
             datetime: lambda v: v.isoformat()
         }
+
+
+class LawyerReviewRequest(BaseModel):
+    """律师审核反馈请求模型"""
+    decision: Literal["approved", "revise_facts", "revise_risk"] = Field(
+        ..., description="律师审核决定: approved=批准报告, revise_facts=要求修改事实, revise_risk=要求修改风险评估"
+    )
+    feedback: Optional[str] = Field(None, description="律师反馈意见")
+    final_output: Optional[str] = Field(None, description="律师确认的最终报告内容(仅当decision=approved时)")
+
+
+class LawyerReviewResponse(BaseModel):
+    """律师审核反馈响应模型"""
+    session_id: str = Field(..., description="会话ID")
+    decision: str = Field(..., description="审核决定")
+    feedback: Optional[str] = Field(None, description="反馈意见")
+    next_agent: Optional[str] = Field(None, description="下一步将执行的Agent")
+    processed_at: datetime = Field(..., description="处理时间")
+
+
+class SessionCloseRequest(BaseModel):
+    """关闭会话请求模型"""
+    reason: Optional[str] = Field(None, description="关闭原因")
+
+
+class SessionCloseResponse(BaseModel):
+    """关闭会话响应模型"""
+    session_id: str = Field(..., description="会话ID")
+    success: bool = Field(True, description="操作是否成功")
+    message: str = Field(..., description="操作结果消息")
+    closed_at: datetime = Field(..., description="关闭时间")
+
+
+class SessionListItem(BaseModel):
+    """会话列表项模型"""
+    session_id: str = Field(..., description="会话ID")
+    consultation_id: str = Field(..., description="咨询记录ID")
+    user_id: str = Field(..., description="用户ID")
+    user_type: str = Field(..., description="用户类型")
+    current_agent: str = Field(..., description="当前Agent")
+    status: str = Field(..., description="会话状态")
+    consent_given: bool = Field(False, description="是否已同意隐私条款")
+    alert_triggered: bool = Field(False, description="是否触发高风险告警")
+    awaiting_lawyer_review: bool = Field(False, description="是否等待律师审核")
+    risk_level: Optional[str] = Field(None, description="风险等级")
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")
+
+
+class SessionListResponse(BaseModel):
+    """会话列表响应模型"""
+    sessions: List[SessionListItem] = Field(default_factory=list, description="会话列表")
+    total: int = Field(0, description="总数")
 
 
 class WSAgentMessage(BaseModel):

@@ -23,8 +23,14 @@ from app.v1.schemas.consultation_schemas import (
     ConfirmConsentResponse,
     CreateSessionRequest,
     CreateSessionResponse,
+    LawyerReviewRequest,
+    LawyerReviewResponse,
     SendMessageRequest,
     SendMessageResponse,
+    SessionCloseRequest,
+    SessionCloseResponse,
+    SessionListItem,
+    SessionListResponse,
     SessionStateResponse,
     WebSocketMessage,
 )
@@ -77,6 +83,43 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 SESSION_TTL = 7200
+
+HIGH_RISK_ALERT_MESSAGE = "为保护您的权益，此部分内容建议直接与律师单独沟通"
+
+
+async def _handle_high_risk_alert(
+    session_id: str,
+    result: ConsultationState,
+    current_agent: str,
+) -> None:
+    """Handle high-risk alert consistently across HTTP and WebSocket channels.
+
+    Persists the alert state to orchestrator and Redis, ensuring the
+    alert_triggered flag and conversation history are recorded regardless
+    of which transport channel triggered the alert.
+
+    Args:
+        session_id: Session identifier.
+        result: Updated ConsultationState with alert_triggered=True.
+        current_agent: Name of the agent that detected the risk.
+    """
+    _logger.warning(
+        "【_handle_high_risk_alert】高风险警报: session_id=%s, agent=%s",
+        session_id,
+        current_agent,
+    )
+
+    if "conversation_history" not in result:
+        result["conversation_history"] = []
+    result["conversation_history"].append({
+        "agent": current_agent,
+        "action": "high_risk_alert",
+        "content": HIGH_RISK_ALERT_MESSAGE,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+
+    orchestrator.update_session_context(session_id, result)
+    await set_redis_cache(f"session:{session_id}", dict(result), expire=SESSION_TTL)
 
 
 async def _generate_welcome_message(user_type: str = "suspect") -> str:
@@ -331,6 +374,22 @@ async def send_message(
 
     current_agent = state.get("current_agent", "Receptionist")
 
+    # 循环保护检查
+    loop_count = state.get("fact_law_loop_count", 0)
+    max_loops = 10
+    if loop_count > 0:
+        _logger.info(
+            "【send_message】当前循环次数: %d/%d, coverage_rate: %.2f",
+            loop_count,
+            max_loops,
+            state.get("facts_coverage_rate", 0.0),
+        )
+        if loop_count >= max_loops:
+            _logger.warning(
+                "【send_message】已达到最大循环次数 %d，将强制进入风险评估",
+                max_loops,
+            )
+
     try:
         result = await orchestrator.run_node(current_agent, state)
 
@@ -338,10 +397,10 @@ async def send_message(
         next_agent = result.get("current_agent", current_agent)
 
         if result.get("alert_triggered"):
-            _logger.warning("【send_message】触发高风险警报: session_id=%s", session_id)
+            await _handle_high_risk_alert(session_id, result, current_agent)
             raise HTTPException(
                 status_code=403,
-                detail="为保护您的权益，此部分内容建议直接与律师单独沟通",
+                detail=HIGH_RISK_ALERT_MESSAGE,
             )
 
         if "conversation_history" not in result:
@@ -567,6 +626,255 @@ async def get_session_state(
     )
 
 
+@router.put("/{session_id}/review", response_model=LawyerReviewResponse)
+async def lawyer_review(
+    session_id: str,
+    request: LawyerReviewRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """律师审核反馈
+
+    处理律师对报告的审核决定：
+    - approved: 批准报告，流程结束
+    - revise_facts: 要求修改事实，返回FactDigger重新收集
+    - revise_risk: 要求修改风险评估，返回RiskAssessor重新评估
+
+    Args:
+        session_id: 会话ID
+        request: 律师审核请求参数
+        current_user: 当前认证用户
+
+    Returns:
+        律师审核响应
+    """
+    _logger.info(
+        "【lawyer_review】律师审核请求: session_id=%s, decision=%s, user_id=%s, role=%s",
+        session_id,
+        request.decision,
+        current_user["user_id"],
+        current_user["role"],
+    )
+
+    if current_user["role"] not in ["lawyer", "admin"]:
+        _logger.warning(
+            "【lawyer_review】权限不足: 只有律师或管理员可以审核 session_id=%s, role=%s",
+            session_id,
+            current_user["role"],
+        )
+        raise HTTPException(status_code=403, detail="只有律师或管理员可以审核")
+
+    state = orchestrator.get_session_context(session_id)
+
+    if not state:
+        state = await get_redis_cache_json(f"session:{session_id}")
+        if state:
+            state = ConsultationState(**state) if isinstance(state, dict) else state
+
+    if not state:
+        _logger.warning("【lawyer_review】会话不存在: session_id=%s", session_id)
+        raise HTTPException(status_code=404, detail="会话不存在或已过期")
+
+    if not state.get("awaiting_lawyer_review"):
+        _logger.warning(
+            "【lawyer_review】会话未等待审核: session_id=%s, awaiting=%s",
+            session_id,
+            state.get("awaiting_lawyer_review"),
+        )
+        raise HTTPException(status_code=400, detail="此会话未在等待律师审核")
+
+    if request.decision not in ["approved", "revise_facts", "revise_risk"]:
+        _logger.warning("【lawyer_review】无效的审核决定: decision=%s", request.decision)
+        raise HTTPException(status_code=400, detail="无效的审核决定")
+
+    if request.decision == "approved" and request.final_output:
+        state["final_output"] = request.final_output
+
+    if request.feedback:
+        state["lawyer_feedback"] = request.feedback
+
+    try:
+        result = await orchestrator.process_lawyer_feedback(
+            session_id=session_id,
+            decision=request.decision,
+            feedback=request.feedback,
+        )
+
+        next_agent_map = {
+            "approved": None,
+            "revise_facts": "fact_digger",
+            "revise_risk": "risk_assessor",
+        }
+        next_agent = next_agent_map.get(request.decision)
+
+        if request.decision != "approved" and next_agent:
+            result = await orchestrator.run_node(next_agent, result)
+            orchestrator.update_session_context(session_id, result)
+            await set_redis_cache(f"session:{session_id}", dict(result), expire=SESSION_TTL)
+
+        if request.decision == "approved":
+            state["current_agent"] = "END"
+            state["status"] = "completed"
+            orchestrator.update_session_context(session_id, state)
+            await set_redis_cache(f"session:{session_id}", dict(state), expire=SESSION_TTL)
+
+        _logger.info(
+            "【lawyer_review】律师审核处理完成: session_id=%s, decision=%s, next_agent=%s",
+            session_id,
+            request.decision,
+            next_agent,
+        )
+
+        return LawyerReviewResponse(
+            session_id=session_id,
+            decision=request.decision,
+            feedback=request.feedback,
+            next_agent=next_agent,
+            processed_at=datetime.utcnow(),
+        )
+
+    except Exception as e:
+        _logger.error("【lawyer_review】律师审核处理异常: session_id=%s, error=%s", session_id, str(e))
+        raise HTTPException(status_code=500, detail="审核处理失败，请稍后重试")
+
+
+@router.get("", response_model=SessionListResponse)
+async def list_sessions(
+    current_user: dict = Depends(get_current_user),
+):
+    """获取会话列表
+
+    根据用户角色返回不同的会话列表：
+    - admin: 所有会话
+    - lawyer: 分配给自己的会话
+    - client: 自己的会话
+
+    Args:
+        current_user: 当前认证用户
+
+    Returns:
+        会话列表响应
+    """
+    _logger.info(
+        "【list_sessions】会话列表请求: user_id=%s, role=%s",
+        current_user["user_id"],
+        current_user["role"],
+    )
+
+    active_sessions = orchestrator.get_active_sessions()
+    sessions = []
+
+    for sess_id, state in active_sessions.items():
+        user_id = state.get("user_id", "")
+
+        if current_user["role"] == "client" and user_id != current_user["user_id"]:
+            continue
+
+        if current_user["role"] == "lawyer":
+            lawyer_id = state.get("lawyer_id")
+            if lawyer_id and lawyer_id != current_user["user_id"]:
+                continue
+
+        sessions.append(SessionListItem(
+            session_id=sess_id,
+            consultation_id=state.get("consultation_id", ""),
+            user_id=user_id,
+            user_type=state.get("user_type", "suspect"),
+            current_agent=state.get("current_agent", "Receptionist"),
+            status="active" if state.get("awaiting_lawyer_review") else "in_progress",
+            consent_given=state.get("consent_given", False),
+            alert_triggered=state.get("alert_triggered", False),
+            awaiting_lawyer_review=state.get("awaiting_lawyer_review", False),
+            risk_level=state.get("risk_assessment", {}).get("risk_level") if state.get("risk_assessment") else None,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        ))
+
+    _logger.info("【list_sessions】会话列表返回: total=%d", len(sessions))
+
+    return SessionListResponse(
+        sessions=sessions,
+        total=len(sessions),
+    )
+
+
+@router.post("/{session_id}/close", response_model=SessionCloseResponse)
+async def close_session(
+    session_id: str,
+    request: SessionCloseRequest = None,
+    current_user: dict = Depends(get_current_user),
+):
+    """关闭会话
+
+    关闭指定会话，清理会话状态。
+
+    Args:
+        session_id: 会话ID
+        request: 关闭会话请求参数
+        current_user: 当前认证用户
+
+    Returns:
+        关闭会话响应
+    """
+    _logger.info(
+        "【close_session】关闭会话请求: session_id=%s, user_id=%s, role=%s",
+        session_id,
+        current_user["user_id"],
+        current_user["role"],
+    )
+
+    state = orchestrator.get_session_context(session_id)
+
+    if not state:
+        state = await get_redis_cache_json(f"session:{session_id}")
+        if state:
+            state = ConsultationState(**state) if isinstance(state, dict) else state
+
+    if not state:
+        _logger.warning("【close_session】会话不存在: session_id=%s", session_id)
+        raise HTTPException(status_code=404, detail="会话不存在或已过期")
+
+    user_id = state.get("user_id", "")
+    is_owner = user_id == current_user["user_id"]
+    is_lawyer_or_admin = current_user["role"] in ["lawyer", "admin"]
+
+    if not is_owner and not is_lawyer_or_admin:
+        _logger.warning(
+            "【close_session】无权关闭会话: session_id=%s, user_id=%s",
+            session_id,
+            current_user["user_id"],
+        )
+        raise HTTPException(status_code=403, detail="无权关闭此会话")
+
+    reason = request.reason if request else None
+
+    if "conversation_history" not in state:
+        state["conversation_history"] = []
+    state["conversation_history"].append({
+        "agent": "system",
+        "action": "session_closed",
+        "reason": reason,
+        "closed_by": current_user["user_id"],
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+
+    state["current_agent"] = "END"
+    orchestrator.update_session_context(session_id, state)
+    await set_redis_cache(f"session:{session_id}", dict(state), expire=SESSION_TTL)
+
+    _logger.info(
+        "【close_session】会话关闭成功: session_id=%s, reason=%s",
+        session_id,
+        reason,
+    )
+
+    return SessionCloseResponse(
+        session_id=session_id,
+        success=True,
+        message=f"会话已成功关闭{'，原因：' + reason if reason else ''}",
+        closed_at=datetime.utcnow(),
+    )
+
+
 @router.websocket("/{session_id}/ws")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     """WebSocket 通信端点
@@ -646,6 +954,22 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
                 current_agent = state.get("current_agent", "Receptionist")
 
+                # 循环保护检查
+                loop_count = state.get("fact_law_loop_count", 0)
+                max_loops = 10
+                if loop_count > 0:
+                    _logger.info(
+                        "【websocket_endpoint】当前循环次数: %d/%d, coverage_rate: %.2f",
+                        loop_count,
+                        max_loops,
+                        state.get("facts_coverage_rate", 0.0),
+                    )
+                    if loop_count >= max_loops:
+                        _logger.warning(
+                            "【websocket_endpoint】已达到最大循环次数 %d，将强制进入风险评估",
+                            max_loops,
+                        )
+
                 try:
                     result = await orchestrator.run_node(current_agent, state)
 
@@ -653,9 +977,10 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     next_agent = result.get("current_agent", current_agent)
 
                     if result.get("alert_triggered"):
+                        await _handle_high_risk_alert(session_id, result, current_agent)
                         await websocket.send_json({
                             "type": "alert",
-                            "content": "为保护您的权益，此部分内容建议直接与律师单独沟通",
+                            "content": HIGH_RISK_ALERT_MESSAGE,
                             "agent_name": current_agent,
                             "session_id": session_id,
                         })
@@ -667,24 +992,24 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                             "session_id": session_id,
                         })
 
-                    if "conversation_history" not in result:
-                        result["conversation_history"] = []
-                    result["conversation_history"].append({
-                        "agent": current_agent,
-                        "user_message": content,
-                        "agent_response": response_content,
-                        "timestamp": datetime.utcnow().isoformat(),
-                    })
+                        if "conversation_history" not in result:
+                            result["conversation_history"] = []
+                        result["conversation_history"].append({
+                            "agent": current_agent,
+                            "user_message": content,
+                            "agent_response": response_content,
+                            "timestamp": datetime.utcnow().isoformat(),
+                        })
 
-                    state = result
-                    orchestrator.update_session_context(session_id, result)
-                    await set_redis_cache(f"session:{session_id}", dict(result), expire=SESSION_TTL)
+                        state = result
+                        orchestrator.update_session_context(session_id, result)
+                        await set_redis_cache(f"session:{session_id}", dict(result), expire=SESSION_TTL)
 
-                    await websocket.send_json({
-                        "type": "ack",
-                        "content": "消息已处理",
-                        "agent_name": current_agent,
-                    })
+                        await websocket.send_json({
+                            "type": "ack",
+                            "content": "消息已处理",
+                            "agent_name": current_agent,
+                        })
 
                 except Exception as e:
                     _logger.error("【websocket_endpoint】消息处理异常: %s", str(e))
